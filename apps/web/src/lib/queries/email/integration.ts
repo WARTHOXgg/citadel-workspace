@@ -7,12 +7,12 @@ import { throwOnErr } from '@core/util/result';
 import { emailClient } from '@service-email/client';
 import { storageServiceClient } from '@service-storage/client';
 import { setGraphqlEmailThreadArchived } from '@service-storage/graphql-email-archive-state';
-import { getGraphqlSoupClient } from '@service-storage/graphql-soup';
-import { invalidateEmailReminderCollection } from '../reminders/email-collection';
 import {
-  getActiveGraphqlSoupRevalidations,
-  refreshActiveGraphqlSoupQueries,
-} from '../soup/graphql/active-queries';
+  getGraphqlSoupClient,
+  graphqlCacheEnabled,
+} from '@service-storage/graphql-soup';
+import { invalidateEmailReminderCollection } from '../reminders/email-collection';
+import { refreshActiveGraphqlSoupQueries } from '../soup/graphql/active-queries';
 import { updateEntitySharePolicy } from '../storage/entity-mutations';
 
 /** Provider operations used by email's production adapters alongside shared mutations. */
@@ -22,8 +22,10 @@ export const scheduleEmailMessage = (
 export type EmailArchiveDisposition = 'committed' | 'queued';
 
 /** Shared archive path for Done, Not Done, send completion, and Undo/Redo.
- * GraphQL owns optimistic state and durable replay; queued writes must not
- * refetch the server's pre-write membership over the optimistic update. */
+ * GraphQL owns optimistic state and durable replay. With the normalized cache,
+ * the optimistic `inboxVisible` and the committed record update every list
+ * that reads the thread, so nothing is refetched; only the uncached transport
+ * refreshes its lists after the write. */
 export async function archiveEmailThread(
   ...args: Parameters<typeof emailClient.flagArchived>
 ): Promise<EmailArchiveDisposition> {
@@ -32,13 +34,14 @@ export async function archiveEmailThread(
     const disposition = await setGraphqlEmailThreadArchived(
       getGraphqlSoupClient(),
       id,
-      value,
-      getActiveGraphqlSoupRevalidations()
+      value
     );
     if (disposition === 'committed') {
-      await refreshActiveGraphqlSoupQueries({
-        target: { kind: 'email-archive', threadId: id },
-      });
+      if (!graphqlCacheEnabled()) {
+        await refreshActiveGraphqlSoupQueries({
+          target: { kind: 'email-archive', threadId: id },
+        });
+      }
       fireAndForget(invalidateEmailReminderCollection(), 'email-reminders');
     }
     return disposition;
