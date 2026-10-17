@@ -101,6 +101,15 @@ that start within 40px of the left edge are left to swipe-back navigation.
 Search results use the same reserved column, with actions aligned to the first
 line; snippets, highlighted matches, and expanded hits remain unobstructed.
 
+The list holds still while mail changes under it. Scrolled down, new mail or a
+thread marked done elsewhere above the viewport leaves the rows on screen where
+they are; at the top, new mail appears at the top. Cache writes (the mail
+backfill, read marks, thread loads) and mutation refreshes keep the list as deep
+as it was loaded, and Load More keeps working while they land. Verify by
+scrolling past the first 100 threads, then marking a thread done and letting new
+mail arrive (locally: insert a thread and publish `email.message_received` on
+`macro.email`).
+
 When switching email tabs or inboxes, the list shows current-query cached results
 or a scoped `Loading email` spinner until they arrive—not the previous tab's rows
 under the new heading. Active searches also hide retained results and show loading
