@@ -458,8 +458,10 @@ export function useSoupAstItemsQuery(
         usesGraphql() &&
         activeGraphqlQuery().isEnabled() &&
         !options?.().networkPaused,
+      // The refresh refetches every loaded page in cursor order and keeps the
+      // old pages on screen until their replacements arrive, so a mutation
+      // never collapses a scrolled list to its first page.
       refresh: async () => {
-        activeGraphqlQuery().resetToInitialPage();
         options?.().onBeforeGraphqlRefresh?.();
         await activeGraphqlQuery().refresh();
       },
