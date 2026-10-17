@@ -51,7 +51,7 @@ async function refreshSafely(refresh: () => Promise<unknown>): Promise<void> {
  * `unmaintainedOnly` skips readers the cache keeps current from the written
  * rows (FE-56); callers use it once the cache holds every row the write
  * changed, and read everything when it may not (no cache, a stale mark seen,
- * a Home undo). Reuses loaded page variables instead of resetting pagination
+ * Home's work-feed Done and Undo, which return no notification rows). Reuses loaded page variables instead of resetting pagination
  * or reading all cached history. Disabled/unstarted feeds remain dormant.
  */
 export async function revalidateNotificationReaders(

@@ -101,6 +101,15 @@ export function createSoupLiveQuery(
   // The last local Mail evaluation for this input succeeded, so cache writes
   // keep the page current; incomplete or failed ones leave the network page.
   const [localMailCurrent, setLocalMailCurrent] = createSignal(false);
+  // Only the latest request decides, after any stale-revision retries.
+  const recordLocalMailOutcome = (
+    mailView: string | undefined,
+    requestId: number,
+    outcome: 'success' | 'incomplete' | 'error'
+  ) => {
+    if (mailView && requestId === localRequest)
+      setLocalMailCurrent(outcome === 'success');
+  };
 
   const firstPageInput = createMemo<GraphqlSoupInput | undefined>(() => {
     const input = request();
@@ -256,6 +265,7 @@ export function createSoupLiveQuery(
       setLocalProjection(undefined);
       setBaselineGeneration(undefined);
       setUnpersistedPages(new Map());
+      setLocalMailCurrent(false);
     };
     const observeCurrentRevision = async () => {
       const observedGeneration = cacheGeneration;
@@ -763,7 +773,7 @@ export function createSoupLiveQuery(
         // Unsupported, incomplete, validation, and storage failures retain
         // the stale network/normalized-cache fallback already on screen.
       } finally {
-        if (mailView && !discarded) setLocalMailCurrent(outcome === 'success');
+        recordLocalMailOutcome(mailView, requestId, outcome);
         span.setAttr('evaluation.outcome', outcome);
         span.setAttr('evaluation.retry_count', retryCount);
         span.setAttr('evaluation.discarded', discarded);

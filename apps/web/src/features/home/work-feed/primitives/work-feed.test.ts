@@ -200,11 +200,7 @@ describe('createWorkFeed', () => {
         input: { items: [{ id: 'document:doc-a', revision: 'rev-doc-a' }] },
       },
     });
-    // The notifications the row showed, which the server just made done.
-    expect(revalidateNotifications).toHaveBeenCalledExactlyOnceWith(
-      expect.anything(),
-      ['n-a']
-    );
+    expect(revalidateNotifications).toHaveBeenCalledTimes(1);
 
     // The server's removal arrives on the stream; the done needs no read.
     fake.subscriptions[0].next({

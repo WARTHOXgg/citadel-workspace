@@ -171,7 +171,7 @@ the server resolves that inbox's UNREAD label and returns the canonical thread
 even when the client labels cache is missing or stale—no label fetch precedes the
 optimistic update. Queued read/unread writes retain revalidation descriptors for
 the active lists the cache does not maintain (grouped lists, filters it cannot
-evaluate, a Mail page whose local evaluation is incomplete), including loaded
+evaluate, a Mail page the cache cannot evaluate locally), including loaded
 continuation pages. Once replay commits (even after a reload), only those queries
 refresh from the server; they should not refetch over the optimistic state merely
 because a write was queued. Trash
@@ -199,10 +199,13 @@ warn without rolling back accepted unarchives. Verify mixed committed/queued/
 rejected selections, partial-success counts, and that a queued sibling prevents
 shared-list refetch even when notification restoration fails. With the normalized
 cache, a list the cache maintains is not read again after Done, Not Done, Undo,
-read/unread, an entity notification update, a reminder or a draft save: the
-optimistic write and the returned records update it, and it re-evaluates from the
-cache (FE-56). Every Mail tab is maintained once its local evaluation succeeds;
-grouped lists and filters the cache cannot evaluate are still read again. In the
+read/unread, an entity notification update or a draft save: the optimistic write
+and the returned records update it, and it re-evaluates from the cache (FE-56).
+Every Mail tab is maintained once its local evaluation succeeds; grouped lists and
+filters the cache cannot evaluate are still read again. A reminder reads its
+thread again plus Home's unread presence, whose `unreadReminders` edge no cached
+write fills. Home's work-feed Done and Undo return no notification rows, so they
+still read every notification reader again. In the
 network panel one `e` in the Email view sends its two mutations and no `Soup`,
 `SoupNotifications` or `ChannelUnreadPresence` query. Verify the open-thread header too: with GraphQL enabled,
 Mark Not Done remains available for an archived thread whose inbox timestamp is

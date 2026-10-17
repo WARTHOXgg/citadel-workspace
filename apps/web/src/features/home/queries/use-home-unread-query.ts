@@ -78,6 +78,8 @@ export function useHomeUnreadQuery(
       hasGraphqlCacheHost
     )
   );
+  // Not maintained for list refreshes: a delivered reminder adds to a
+  // thread's `unreadReminders` edge, which no cached write fills.
   onCleanup(registerActiveGraphqlSoupQuery({ isEnabled: enabled, refresh }));
   onCleanup(
     registerActivityRevalidator({

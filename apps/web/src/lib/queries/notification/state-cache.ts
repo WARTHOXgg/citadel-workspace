@@ -5,8 +5,7 @@ import {
   type NotificationStateCacheWriteSubscription,
 } from '@service-storage/graphql/generated/graphql';
 import { getGraphqlCacheHost } from '@service-storage/graphql-soup';
-import { type Client, stringifyDocument } from '@urql/core';
-import { revalidateNotificationReaders } from './revalidation';
+import { stringifyDocument } from '@urql/core';
 
 const stateWrite = stringifyDocument(NotificationStateCacheWriteDocument);
 
@@ -61,23 +60,4 @@ export function confirmEntityNotificationsDone(
   if (!host || ids.length === 0) return false;
   void writeConfirmedDone(host, ids);
   return true;
-}
-
-/**
- * After a write that made `doneIds` done without returning them: record them
- * in the cache, which keeps its readers current, and read again only the
- * readers it does not maintain. Without ids or a cache, every reader is read
- * again.
- */
-export async function reconcileNotificationsDone(
-  client: Client,
-  doneIds: readonly string[] = []
-): Promise<void> {
-  const host = getGraphqlCacheHost();
-  if (!host || doneIds.length === 0) {
-    await revalidateNotificationReaders(client);
-    return;
-  }
-  await writeNotificationStates(host, doneIds, 'DONE');
-  await revalidateNotificationReaders(client, { unmaintainedOnly: true });
 }

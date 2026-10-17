@@ -59,6 +59,12 @@ export function createChannelUnreadQuery(
         : [],
     },
   }));
-  onCleanup(registerActiveGraphqlSoupQuery({ isEnabled: enabled, refresh }));
+  onCleanup(
+    registerActiveGraphqlSoupQuery({
+      isEnabled: enabled,
+      refresh,
+      cacheMaintained: hasGraphqlCacheHost,
+    })
+  );
   return query;
 }
