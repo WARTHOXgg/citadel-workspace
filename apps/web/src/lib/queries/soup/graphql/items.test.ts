@@ -1913,6 +1913,120 @@ describe('createGraphqlSoupAstItemsQuery', () => {
     }
   });
 
+  it('keeps a paged Mail list as deep when cache writes land under it', async () => {
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    const fake = makeFakeClient();
+    getGraphqlSoupClientMock.mockReturnValue(fake.client);
+    let revision = REVISION_0;
+    let notifyCacheChanged: (revision: string) => void = () => undefined;
+    getGraphqlSoupCacheHostMock.mockReturnValue({
+      currentRevision: async () => revision,
+      entityFilter: entityFilterMock,
+      onCacheChanged: (callback: (revision: string) => void) => {
+        notifyCacheChanged = callback;
+        return () => undefined;
+      },
+      onCacheGenerationChanged: () => () => {},
+    });
+    const all = ['a', 'b', 'c', 'd', 'e', 'f'].map(
+      (id) => `GraphqlSoupEmailThread:${id}`
+    );
+    // The index's cursor is a position at a revision; any write stales it.
+    entityFilterMock.mockImplementation(
+      async (args: { limit: number; mail: { cursor?: string } }) => {
+        const [position, cursorRevision] = (args.mail.cursor ?? '0@').split(
+          '@'
+        );
+        if (args.mail.cursor && cursorRevision !== revision)
+          return { kind: 'stale-cursor', revision };
+        const start = Number(position);
+        const keys = all.slice(start, start + args.limit);
+        const end = start + keys.length;
+        return {
+          kind: 'mail-page',
+          revision,
+          keys,
+          sortTimestamps: keys.map(() => '2025-01-01T00:00:00.000001Z'),
+          nextCursor: end < all.length ? `${end}@${revision}` : null,
+          optimistic: false,
+        };
+      }
+    );
+    readRecordsByKeysMock.mockImplementation(
+      async (_host, _selection, requested: string[]) => ({
+        revision,
+        records: requested.map((key) => ({
+          recordKey: key,
+          record: {
+            __typename: 'GraphqlSoupEmailThread',
+            id: key.split(':')[1],
+            name: key,
+            mailAllPreview: {
+              id: `${key}-preview`,
+              subject: key,
+              snippet: 'canonical',
+              isDraft: false,
+              senderEmail: null,
+              senderName: null,
+              senderPhotoUrl: null,
+            },
+            mailDraftPreview: null,
+            mailSentPreview: null,
+          },
+        })),
+      })
+    );
+    let dispose!: () => void;
+    let query!: ReturnType<typeof createGraphqlSoupAstItemsQuery>;
+    createRoot((d) => {
+      dispose = d;
+      makeGraphqlSoupInputMock.mockReturnValue({
+        initial: {
+          emailView: 'INBOX',
+          sortMethod: 'UPDATED_AT',
+          limit: 2,
+          filters: {},
+        },
+      });
+      query = createGraphqlSoupAstItemsQuery(
+        () => ({ params: {}, body: {} }) as never,
+        () => ({ enabled: true })
+      );
+    });
+    const ids = () => query.data()?.entities.map((entity) => entity.id);
+    try {
+      await vi.waitFor(() => expect(ids()).toEqual(['a', 'b']));
+      const requestsBeforePage = entityFilterMock.mock.calls.length;
+      await query.fetchNextPage();
+      expect(ids()).toEqual(['a', 'b', 'c', 'd']);
+      // A write re-evaluates the page; it must not fall back to the first page.
+      revision = REVISION_1;
+      notifyCacheChanged(REVISION_1);
+      await vi.waitFor(() =>
+        expect(entityFilterMock.mock.calls.at(-1)?.[0]).toMatchObject({
+          limit: 4,
+          mail: { view: 'INBOX' },
+        })
+      );
+      expect(ids()).toEqual(['a', 'b', 'c', 'd']);
+      // Loading the page read only that page, and the write one evaluation:
+      // the deeper list the page left was already current, so nothing
+      // evaluated it again in between.
+      expect(entityFilterMock.mock.calls.length - requestsBeforePage).toBe(2);
+
+      // A write between evaluating and paging stales the cursor: the next
+      // page still arrives, read deeper at the new revision.
+      revision = REVISION_2;
+      await query.fetchNextPage();
+      await vi.waitFor(() =>
+        expect(ids()).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
+      );
+    } finally {
+      dispose();
+      online.mockRestore();
+    }
+  });
+
   it.each([
     { mail: true, kind: 'mail-page' },
     { mail: true, kind: 'incomplete' },
