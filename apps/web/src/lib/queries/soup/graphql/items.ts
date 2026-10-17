@@ -38,6 +38,8 @@ export type GraphqlSoupAstItemsQueryOptions = SoupLiveQueryOptions & {
 
 export type GraphqlSoupAstItemsQuery = {
   groupedPaging?: GroupedSoupPaging;
+  /** Cache writes keep this list current; absent for grouped lists. */
+  cacheMaintained?: Accessor<boolean>;
   localRevision?: Accessor<CacheRevision | undefined>;
   localOptimistic?: Accessor<boolean>;
   data: Accessor<SoupAstItemsData | undefined>;

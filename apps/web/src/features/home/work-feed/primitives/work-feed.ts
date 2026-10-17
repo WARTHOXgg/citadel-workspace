@@ -50,8 +50,12 @@ export type WorkFeedOptions = {
   enabled: Accessor<boolean>;
   /** Subscribes to transport reconnects, after which changes may be missed. */
   onReconnected?: (listener: () => void) => () => void;
-  /** Reconciles other notification readers after a done or undo commits. */
-  revalidateNotifications?: (client: Client) => Promise<void>;
+  /** Reconciles other notification readers after a done or undo commits,
+   * given the notifications a done made done. */
+  revalidateNotifications?: (
+    client: Client,
+    doneNotificationIds?: readonly string[]
+  ) => Promise<void>;
 };
 
 /** Raw notification ids an entry's row shows, for local done overrides. */
@@ -254,7 +258,14 @@ export function createWorkFeed(options: WorkFeedOptions) {
       // which removes or moves the rows; no read is needed.
       commit: async () => {
         const { undoToken } = await markWorkFeedItemsDone(client, items);
-        fireAndForget(options.revalidateNotifications?.(client), 'home');
+        // The server marks done the notifications each row showed.
+        fireAndForget(
+          options.revalidateNotifications?.(
+            client,
+            targets.flatMap(notificationIds)
+          ),
+          'home'
+        );
         return {
           undo: async () => {
             const patches = await undoWorkFeedItemsDone(
