@@ -383,6 +383,75 @@ describe('createGraphqlSoupAstItemsQuery', () => {
     }
   );
 
+  it.each([
+    { localReconciliation: undefined, maintained: true },
+    { localReconciliation: 'without-email' as const, maintained: false },
+  ])(
+    'reports a live list cache-maintained only once its query is ready ($localReconciliation)',
+    async ({ localReconciliation, maintained }) => {
+      const fake = makeFakeClient();
+      getGraphqlSoupClientMock.mockReturnValue(fake.client);
+      const record = {
+        __typename: 'GraphqlSoupDocument',
+        id: 'one',
+        documentName: 'Doc',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      };
+      const key = 'GraphqlSoupDocument:one';
+      getGraphqlSoupCacheHostMock.mockReturnValue({
+        liveQueries: true,
+        currentRevision: async () => REVISION_1,
+        entityFilter: entityFilterMock,
+        onCacheChanged: () => () => {},
+        onCacheGenerationChanged: () => () => {},
+      });
+      const firstEvaluation = deferred<unknown>();
+      entityFilterMock.mockImplementation(async (args) =>
+        args.liveQuery?.release
+          ? { kind: 'unsupported' }
+          : firstEvaluation.promise
+      );
+      const { query, dispose } = createRoot((dispose) => ({
+        dispose,
+        query: createSoupLiveQuery(
+          () => ({ filters: {}, sortMethod: 'UPDATED_AT', limit: 50 }),
+          () => ({ localReconciliation })
+        ),
+      }));
+      try {
+        fake.executions[0].next(
+          graphqlSoupPage({ items: [record], next_cursor: null }),
+          { source: 'live-network', revision: REVISION_1 }
+        );
+        await vi.waitFor(() =>
+          expect(entityFilterMock).toHaveBeenCalledWith(
+            expect.objectContaining({ liveQuery: expect.anything() })
+          )
+        );
+        // Still loading, the list shows the server page: writes read it again.
+        expect(query.cacheMaintained?.()).toBe(false);
+        firstEvaluation.resolve({
+          kind: 'live-query',
+          revision: REVISION_1,
+          reset: true,
+          keys: [key],
+          upserts: [{ recordKey: key, record }],
+          patches: [],
+          removed: [],
+          retainedKeys: [],
+          optimistic: false,
+        });
+        // A folder list keeps its email rows from the server.
+        await vi.waitFor(() =>
+          expect(query.cacheMaintained?.()).toBe(maintained)
+        );
+      } finally {
+        dispose();
+      }
+    }
+  );
+
   it('keeps fetched timestamp coverage when a live version of the same row has a different timestamp', async () => {
     const fake = makeFakeClient();
     getGraphqlSoupClientMock.mockReturnValue(fake.client);
@@ -1907,6 +1976,88 @@ describe('createGraphqlSoupAstItemsQuery', () => {
       expect(entityFilterMock.mock.calls.at(-1)?.[0].mail).toEqual({
         view: 'INBOX',
       });
+    } finally {
+      dispose();
+      online.mockRestore();
+    }
+  });
+
+  it('keeps the server page fetched behind a local Mail list out of its loading and error state', async () => {
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    const fake = makeFakeClient();
+    getGraphqlSoupClientMock.mockReturnValue(fake.client);
+    getGraphqlSoupCacheHostMock.mockReturnValue({
+      currentRevision: async () => REVISION_0,
+      entityFilter: entityFilterMock,
+      onCacheChanged: () => () => {},
+      onCacheGenerationChanged: () => () => {},
+    });
+    entityFilterMock.mockImplementation(async (args) => ({
+      kind: 'mail-page',
+      revision: REVISION_0,
+      keys: [`GraphqlSoupEmailThread:${args.mail.cursor ? 'two' : 'one'}`],
+      sortTimestamps: ['2025-01-01T00:00:00.000001Z'],
+      nextCursor: args.mail.cursor ? null : 'local-next',
+      // Only the first page shows a pending write.
+      optimistic: !args.mail.cursor,
+    }));
+    readRecordsByKeysMock.mockImplementation(
+      async (_host, _selection, requested) => ({
+        revision: REVISION_0,
+        records: requested.map((key: string) => ({
+          recordKey: key,
+          record: {
+            __typename: 'GraphqlSoupEmailThread',
+            id: key.split(':')[1],
+            name: key,
+            mailAllPreview: {
+              id: `${key}-preview`,
+              subject: key,
+              snippet: 'canonical',
+              isDraft: false,
+              senderEmail: null,
+              senderName: null,
+              senderPhotoUrl: null,
+            },
+            mailDraftPreview: null,
+            mailSentPreview: null,
+          },
+        })),
+      })
+    );
+    let dispose!: () => void;
+    let query!: ReturnType<typeof createGraphqlSoupAstItemsQuery>;
+    createRoot((d) => {
+      dispose = d;
+      makeGraphqlSoupInputMock.mockReturnValue({
+        initial: { emailView: 'ALL', sortMethod: 'UPDATED_AT', limit: 1 },
+      });
+      query = createGraphqlSoupAstItemsQuery(
+        () => ({ params: {}, body: {} }) as never,
+        () => ({ enabled: true })
+      );
+    });
+    try {
+      await vi.waitFor(() => expect(query.data()?.cachedMail).toBe(true));
+      fake.executions[0].next(
+        graphqlSoupPage({ items: [], next_cursor: 'server-cursor' }),
+        { source: 'normalized-cache-hit', revision: REVISION_0 }
+      );
+      await query.fetchNextPage();
+      expect(query.data()?.entities.map((entity) => entity.id)).toEqual([
+        'one',
+        'two',
+      ]);
+      // The server page behind the list is requested but not waited on.
+      expect(fake.executions).toHaveLength(2);
+      expect(query.isFetchingNextPage()).toBe(false);
+      fake.executions[1].fail(
+        new CombinedError({ networkError: new Error('offline') })
+      );
+      expect(query.error()).toBeUndefined();
+      expect(query.data()?.entities).toHaveLength(2);
+      // The write still pending on the first page keeps the local list up.
+      expect(query.data()?.cachedMail).toBe(true);
     } finally {
       dispose();
       online.mockRestore();
