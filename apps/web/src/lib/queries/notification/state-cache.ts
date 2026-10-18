@@ -1,4 +1,5 @@
 import type { CacheHost } from '@graphql-cache/host/types';
+import { Telemetry } from '@macro-inc/observability';
 import {
   type NotificationState,
   NotificationStateCacheWriteDocument,
@@ -6,6 +7,7 @@ import {
 } from '@service-storage/graphql/generated/graphql';
 import { getGraphqlCacheHost } from '@service-storage/graphql-soup';
 import { stringifyDocument } from '@urql/core';
+import { ResultAsync } from 'neverthrow';
 
 const stateWrite = stringifyDocument(NotificationStateCacheWriteDocument);
 
@@ -38,12 +40,16 @@ async function writeConfirmedDone(
   host: Pick<CacheHost, 'writeQuery'>,
   ids: readonly string[]
 ): Promise<void> {
-  try {
-    await writeNotificationStates(host, ids, 'DONE');
-  } catch (error) {
-    // The Done overlay retries reconciliation if the rows never read done.
-    console.error('Failed to record confirmed notification state', error);
-  }
+  const written = await ResultAsync.fromPromise(
+    writeNotificationStates(host, ids, 'DONE'),
+    (error) => error
+  );
+  // The Done overlay retries reconciliation if the rows never read done.
+  if (written.isErr())
+    Telemetry.error(written.error, {
+      operation: 'notification.state_cache_write',
+      'notification.count': ids.length,
+    });
 }
 
 /**
