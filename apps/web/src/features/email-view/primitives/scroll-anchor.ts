@@ -1,9 +1,15 @@
+import { isTouchDevice } from '@core/mobile/isTouchDevice';
 import { type Accessor, createEffect, on } from 'solid-js';
 
 type Anchor = { id: string; top: number };
 
 /** A row past the first one keeps the anchor when the first is the one removed. */
 const ANCHOR_CANDIDATES = 3;
+/**
+ * A touch scroll still moving is left alone: setting `scrollTop` stops iOS
+ * momentum scrolling dead. Scroll events arrive every frame while it moves.
+ */
+const TOUCH_SCROLL_SETTLE_MS = 150;
 
 /**
  * Keeps the rows on screen where they are when rows are added or removed
@@ -19,9 +25,9 @@ export function createScrollAnchor(options: {
   rows: Accessor<readonly { id: string }[]>;
 }) {
   let anchors: Anchor[] = [];
+  let lastScrollAt = Number.NEGATIVE_INFINITY;
 
-  /** Records where the first rows on screen are; call on every scroll. */
-  const capture = () => {
+  const measure = () => {
     const scroller = options.scroller();
     anchors = [];
     if (!scroller || scroller.scrollTop <= 0) return;
@@ -36,6 +42,14 @@ export function createScrollAnchor(options: {
       .sort((left, right) => left.top - right.top)
       .slice(0, ANCHOR_CANDIDATES);
   };
+  /** Records where the first rows on screen are; call on every scroll. */
+  const capture = () => {
+    lastScrollAt = performance.now();
+    measure();
+  };
+  const touchScrolling = () =>
+    isTouchDevice() &&
+    performance.now() - lastScrollAt < TOUCH_SCROLL_SETTLE_MS;
 
   // The virtualizer positions the new rows in the same flush, so the anchor's
   // move is measurable here, before the user sees a frame of it.
@@ -45,6 +59,10 @@ export function createScrollAnchor(options: {
       () => {
         const scroller = options.scroller();
         if (!scroller) return;
+        if (touchScrolling()) {
+          measure();
+          return;
+        }
         for (const anchor of anchors) {
           const element = scroller.ownerDocument.getElementById(anchor.id);
           if (!element || !scroller.contains(element)) continue;
@@ -52,7 +70,7 @@ export function createScrollAnchor(options: {
           if (Math.abs(moved) >= 1) scroller.scrollTop += moved;
           break;
         }
-        capture();
+        measure();
       },
       { defer: true }
     )

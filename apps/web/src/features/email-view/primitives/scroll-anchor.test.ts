@@ -1,9 +1,16 @@
 import { createRoot, createSignal } from 'solid-js';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createScrollAnchor } from './scroll-anchor';
+
+const device = vi.hoisted(() => ({ touch: false }));
+vi.mock('@core/mobile/isTouchDevice', () => ({
+  isTouchDevice: () => device.touch,
+}));
 
 afterEach(() => {
   document.body.replaceChildren();
+  device.touch = false;
+  vi.useRealTimers();
 });
 
 /**
@@ -89,4 +96,21 @@ it('leaves the list at the top so new mail shows there', () => {
   update(['new-mail', ...ids]);
 
   expect(dom.scroller.scrollTop).toBe(0);
+});
+
+it('leaves a touch scroll that is still moving alone, so iOS momentum continues', () => {
+  vi.useFakeTimers();
+  device.touch = true;
+  const ids = Array.from({ length: 20 }, (_, index) => `row-${index}`);
+  const { dom, anchor, update } = setup(ids);
+  dom.scrollTo(440);
+  anchor.capture();
+
+  update(['new-mail', ...ids]);
+  expect(dom.scroller.scrollTop).toBe(440);
+
+  // Once the scroll has settled, arrivals are anchored again.
+  vi.advanceTimersByTime(500);
+  update(['newer-mail', 'new-mail', ...ids]);
+  expect(dom.scroller.scrollTop).toBe(440 + 44);
 });
