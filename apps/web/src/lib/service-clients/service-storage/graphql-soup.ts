@@ -560,7 +560,7 @@ export function getGraphqlCacheHost(): CacheHost | undefined {
 
 /** Cache writes reach readers of the normalized cache only while it runs. */
 export const hasGraphqlCacheHost = (): boolean =>
-  getGraphqlCacheHost() !== undefined;
+  graphqlCacheEnabled() && getGraphqlCacheHost() !== undefined;
 
 /**
  * Resolves the urql client, lazily assembling the cached client on first

@@ -75,7 +75,7 @@ const revalidationSources = new Set<{
 export function registerGraphqlSoupRevalidations(
   queries: () => readonly QueryRevalidation[],
   client?: () => Pick<Client, 'query'>,
-  /** The normalized cache keeps these pages current (see FE-56). */
+  /** The normalized cache keeps these pages current (see FE-58). */
   cacheMaintained?: () => boolean
 ): () => void {
   const source = { queries, client, cacheMaintained };
@@ -100,6 +100,10 @@ export function getActiveGraphqlSoupRevalidations(
   }
   return [...queries.values()];
 }
+
+/** The pages a write that updates the normalized cache still reads again. */
+export const getUnmaintainedGraphqlSoupRevalidations = () =>
+  getActiveGraphqlSoupRevalidations(undefined, { unmaintainedOnly: true });
 
 /** Registers a mounted GraphQL Soup query for mutation-driven revalidation. */
 export function registerActiveGraphqlSoupQuery(

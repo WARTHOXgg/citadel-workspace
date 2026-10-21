@@ -15,7 +15,6 @@ import {
   type UpdateNotificationsMutation,
   type UpdateNotificationsMutationVariables,
 } from './graphql/generated/graphql';
-import { graphqlCacheEnabled } from './graphql-soup';
 
 /** Input for a GraphQL notification status write. */
 export type GraphqlUpdateNotificationsArgs = {
@@ -123,9 +122,10 @@ export async function executeGraphqlUpdateNotificationsForEntities(
     // are read again. A stale mark seen reads every reader again: the rows
     // it left out are seen or done, and only the server knows which.
     await revalidateNotificationReaders(client, {
-      unmaintainedOnly:
-        graphqlCacheEnabled() &&
-        !missedExpectedSeen(args, result.data.updateNotificationsForEntity),
+      unmaintainedOnly: !missedExpectedSeen(
+        args,
+        result.data.updateNotificationsForEntity
+      ),
     });
   }
   return result;

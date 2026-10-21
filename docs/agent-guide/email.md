@@ -200,7 +200,7 @@ rejected selections, partial-success counts, and that a queued sibling prevents
 shared-list refetch even when notification restoration fails. With the normalized
 cache, a list the cache maintains is not read again after Done, Not Done, Undo,
 read/unread, an entity notification update or a draft save: the optimistic write
-and the returned records update it, and it re-evaluates from the cache (FE-56).
+and the returned records update it, and it re-evaluates from the cache (FE-58).
 Every Mail tab is maintained once its local evaluation succeeds; grouped lists and
 filters the cache cannot evaluate are still read again. A reminder reads its
 thread again plus Home's unread presence, whose `unreadReminders` edge no cached

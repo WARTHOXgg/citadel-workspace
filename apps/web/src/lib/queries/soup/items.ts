@@ -466,7 +466,7 @@ export function useSoupAstItemsQuery(
         await activeGraphqlQuery().refresh();
       },
       body: () => args().body,
-      // Grouped lists have no local evaluation; they read the server.
+      // Grouped lists don't report it yet, so writes still read them again.
       cacheMaintained: () => activeGraphqlQuery().cacheMaintained?.() ?? false,
     })
   );

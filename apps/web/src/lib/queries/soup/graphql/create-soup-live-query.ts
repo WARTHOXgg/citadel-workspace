@@ -1,7 +1,6 @@
 import { fireAndForget } from '@core/util/fireAndForget';
 import { Telemetry } from '@macro-inc/observability';
 import type { CombinedError } from '@urql/core';
-import { ResultAsync } from 'neverthrow';
 import {
   type Accessor,
   batch,
@@ -41,6 +40,7 @@ import {
   getGraphqlSoupCacheHost,
   getGraphqlSoupClient,
   graphqlSoupProjectionSupported,
+  hasGraphqlCacheHost,
 } from '../../../service-clients/service-storage/graphql-soup';
 import { createUrqlInfiniteQuery } from '../../../urql-solid/create-urql-infinite-query';
 import type { UrqlInfiniteData } from '../../../urql-solid/types';
@@ -101,15 +101,6 @@ export function createSoupLiveQuery(
   // The last local Mail evaluation for this input succeeded, so cache writes
   // keep the page current; incomplete or failed ones leave the network page.
   const [localMailCurrent, setLocalMailCurrent] = createSignal(false);
-  // Only the latest request decides, after any stale-revision retries.
-  const recordLocalMailOutcome = (
-    mailView: string | undefined,
-    requestId: number,
-    outcome: 'success' | 'incomplete' | 'error'
-  ) => {
-    if (mailView && requestId === localRequest)
-      setLocalMailCurrent(outcome === 'success');
-  };
 
   const firstPageInput = createMemo<GraphqlSoupInput | undefined>(() => {
     const input = request();
@@ -579,7 +570,7 @@ export function createSoupLiveQuery(
   // Mail page that evaluates, or a maintained predicate query. Other lists
   // (unsupported filters, a cold cache) still read the server after writes.
   const cacheMaintained = (): boolean => {
-    if (!getGraphqlSoupCacheHost()) return false;
+    if (!hasGraphqlCacheHost()) return false;
     if (localSource()?.mailView) return localMailCurrent();
     // A folder list keeps its email rows from the server, and a maintained
     // query still loading leaves the server page on screen.
@@ -788,7 +779,9 @@ export function createSoupLiveQuery(
           // Unsupported, incomplete, validation, and storage failures retain
           // the stale network/normalized-cache fallback already on screen.
         } finally {
-          recordLocalMailOutcome(mailView, requestId, outcome);
+          // Only the latest request decides, after any stale-revision retries.
+          if (mailView && requestId === localRequest)
+            setLocalMailCurrent(outcome === 'success');
           span.setAttr('evaluation.outcome', outcome);
           span.setAttr('evaluation.retry_count', retryCount);
           span.setAttr('evaluation.discarded', discarded);
@@ -862,6 +855,15 @@ export function createSoupLiveQuery(
     return additions.length ? [...local.records, ...additions] : local.records;
   });
 
+  // Keeps the server pages as deep as a local Mail list, so it stays as deep
+  // when the network page becomes authoritative again. Not awaited: the local
+  // page is what the user sees, and a failed server page is retried on the
+  // next scroll.
+  const fetchServerPageInStep = () => {
+    if (!query.hasNextPage || offline()) return;
+    inStepPageIndex = query.data?.pageParams.length;
+    fireAndForget(query.fetchNextPage(), 'soup-live-query');
+  };
   const cachedMail = createMemo(
     () => !networkIsAuthoritative() && Boolean(displayLocalProjection()?.mail)
   );
@@ -925,15 +927,6 @@ export function createSoupLiveQuery(
         ? displayLocalProjection()?.mail?.nextCursor != null
         : query.hasNextPage,
     fetchNextPage: async () => {
-      // Keep the server pages in step, so the list stays as deep when the
-      // network page becomes authoritative again. Not awaited: the local page
-      // is what the user sees, and a failed server page is retried on the
-      // next scroll.
-      const fetchServerPageInStep = async () => {
-        if (!query.hasNextPage || offline()) return;
-        inStepPageIndex = query.data?.pageParams.length;
-        await ResultAsync.fromPromise(query.fetchNextPage(), (error) => error);
-      };
       const local = displayLocalProjection();
       if (!local?.mail || networkIsAuthoritative()) {
         inStepPageIndex = undefined;
@@ -941,7 +934,7 @@ export function createSoupLiveQuery(
         return;
       }
       if (!local.mail.nextCursor || fetchingMailPage()) return;
-      fireAndForget(fetchServerPageInStep(), 'soup-live-query');
+      fetchServerPageInStep();
       const initial =
         'initial' in local.input ? local.input.initial : undefined;
       const host = getGraphqlSoupCacheHost();

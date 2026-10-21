@@ -2,7 +2,6 @@ import {
   enableGraphqlSoup,
   isFeatureEnabled,
 } from '@core/constant/featureFlags';
-import { graphqlCacheEnabled } from '@service-storage/graphql-soup';
 import { queryClient } from '../client';
 import { fetchGraphqlEmailThread } from '../email/graphql/thread';
 import { emailKeys } from '../email/keys';
@@ -28,9 +27,7 @@ export async function refreshEmailFollowup(threadId: string) {
     ...(isFeatureEnabled(enableGraphqlSoup)
       ? [
           fetchGraphqlEmailThread(threadId),
-          refreshActiveGraphqlSoupQueries({
-            unmaintainedOnly: graphqlCacheEnabled(),
-          }),
+          refreshActiveGraphqlSoupQueries({ unmaintainedOnly: true }),
         ]
       : []),
   ]);

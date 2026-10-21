@@ -174,14 +174,12 @@ export function createGraphqlDoneOperation(args: Args) {
               emailIds: [],
               notificationIds: ids,
             };
-          } else if (confirmed) {
-            // Already done on the server; this client was stale. The row
-            // stays hidden as its cached notifications now read done, and
-            // there is nothing to undo.
-          } else {
+          } else if (!confirmed) {
             // No matching receipt justifies neither a hide nor a restoration.
             // Release this attempt even when Undo was never requested: a stale
-            // reader might otherwise keep the row hidden indefinitely.
+            // reader might otherwise keep the row hidden indefinitely. A
+            // confirmed Done keeps the row hidden: its cached notifications
+            // now read done, and there is nothing to undo.
             attempt.state = 'noop';
             attempt.optimistic.rollback();
           }

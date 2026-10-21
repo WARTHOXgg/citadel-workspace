@@ -28,7 +28,7 @@ vi.mock('../reminders/email-collection', () => ({
 }));
 vi.mock('../soup/graphql/active-queries', () => ({
   refreshActiveGraphqlSoupQueries: mocks.refresh,
-  getActiveGraphqlSoupRevalidations: mocks.revalidations,
+  getUnmaintainedGraphqlSoupRevalidations: mocks.revalidations,
 }));
 
 import { predictOptimisticMutation } from '@graphql-cache/exchange/optimistic-resolvers';
@@ -97,9 +97,7 @@ describe('GraphQL email archive writes', () => {
       // The cached record carries the change to every list the cache
       // maintains; only the others are read again, by the exchange.
       expect(mocks.refresh).not.toHaveBeenCalled();
-      expect(mocks.revalidations).toHaveBeenCalledExactlyOnceWith(undefined, {
-        unmaintainedOnly: true,
-      });
+      expect(mocks.revalidations).toHaveBeenCalledOnce();
     }
   );
 
@@ -162,9 +160,7 @@ describe('GraphQL email archive writes', () => {
     ).resolves.toBe('queued');
     // Replay commits the record; only lists the cache does not maintain are
     // read again, even after a reload.
-    expect(mocks.revalidations).toHaveBeenCalledWith(undefined, {
-      unmaintainedOnly: true,
-    });
+    expect(mocks.revalidations).toHaveBeenCalled();
     expect(
       mocks.mutation.mock.calls[0][2].optimisticMutation.revalidations
     ).toEqual(unmaintained);
