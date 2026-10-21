@@ -9,7 +9,11 @@ import {
   notificationIsRead,
   toNotificationEntity,
 } from '@entity/utils/notification';
-import type { NotificationSource, UnifiedNotification } from '@notifications';
+import {
+  type NotificationSource,
+  shownUnseenNotificationIds,
+  type UnifiedNotification,
+} from '@notifications';
 import { compositeEntity } from '@notifications/types';
 import {
   type NotificationEntityRef,
@@ -68,9 +72,13 @@ export const makeMarkNotificationsReadAction = (
       const entityRef = toNotificationEntityRef(entity);
       if (useEntityMutations && entityRef) {
         entityRefs.push(entityRef);
-        for (const notification of notificationsForEntity(entity))
-          if (notification.state === 'unseen')
-            expectedNotificationIds.push(notification.id);
+        expectedNotificationIds.push(
+          ...shownUnseenNotificationIds(
+            options.notificationSource(),
+            toNotificationEntity(entity),
+            isWithNotification(entity) ? entity.notifications?.() : undefined
+          )
+        );
         targetCount += 1;
         continue;
       }
