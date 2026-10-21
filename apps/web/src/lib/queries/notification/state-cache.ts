@@ -1,5 +1,5 @@
+import { fireAndForget } from '@core/util/fireAndForget';
 import type { CacheHost } from '@graphql-cache/host/types';
-import { Telemetry } from '@macro-inc/observability';
 import {
   type NotificationState,
   NotificationStateCacheWriteDocument,
@@ -7,7 +7,6 @@ import {
 } from '@service-storage/graphql/generated/graphql';
 import { getGraphqlCacheHost } from '@service-storage/graphql-soup';
 import { stringifyDocument } from '@urql/core';
-import { ResultAsync } from 'neverthrow';
 
 const stateWrite = stringifyDocument(NotificationStateCacheWriteDocument);
 
@@ -36,22 +35,6 @@ export async function writeNotificationStates(
   }
 }
 
-async function writeConfirmedDone(
-  host: Pick<CacheHost, 'writeQuery'>,
-  ids: readonly string[]
-): Promise<void> {
-  const written = await ResultAsync.fromPromise(
-    writeNotificationStates(host, ids, 'DONE'),
-    (error) => error
-  );
-  // The Done overlay retries reconciliation if the rows never read done.
-  if (written.isErr())
-    Telemetry.error(written.error, {
-      operation: 'notification.state_cache_write',
-      'notification.count': ids.length,
-    });
-}
-
 /**
  * An entity-wide mark done answers with only the rows it changed, and rows it
  * did not change are not pushed. Every notification of the entity is done on
@@ -64,6 +47,10 @@ export function confirmEntityNotificationsDone(
 ): boolean {
   const host = getGraphqlCacheHost();
   if (!host || ids.length === 0) return false;
-  void writeConfirmedDone(host, ids);
+  // The Done overlay retries reconciliation if the rows never read done.
+  fireAndForget(
+    writeNotificationStates(host, ids, 'DONE'),
+    'notification-state-cache'
+  );
   return true;
 }
