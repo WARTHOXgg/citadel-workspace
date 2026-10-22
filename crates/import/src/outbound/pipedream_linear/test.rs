@@ -111,6 +111,14 @@ fn page(issues: Value, next: Option<&str>) -> (StatusCode, Value) {
     )
 }
 
+/// The answer to the "who am I" query.
+fn viewer(admin: bool) -> (StatusCode, Value) {
+    (
+        StatusCode::OK,
+        json!({ "data": { "viewer": { "admin": admin } } }),
+    )
+}
+
 fn source(
     connection: Option<PipedreamConnection>,
     proxy: CannedProxy,
@@ -130,6 +138,7 @@ async fn open_issues_come_back_as_task_metadata_across_pages() {
     let (linear, proxy) = source(
         Some(connection(true)),
         CannedProxy::new(vec![
+            viewer(true),
             page(
                 json!([{
                     "identifier": "ENG-12",
@@ -178,11 +187,13 @@ async fn open_issues_come_back_as_task_metadata_across_pages() {
     assert_eq!(issues[1].priority, None);
 
     let sent = proxy.sent.lock().unwrap();
-    assert_eq!(sent.len(), 2);
-    assert_eq!(sent[0].0, Method::POST);
-    assert_eq!(sent[0].1, "https://api.linear.app/graphql");
-    assert_eq!(sent[0].2["variables"]["after"], Value::Null);
-    assert_eq!(sent[1].2["variables"]["after"], "cursor-1");
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[1].0, Method::POST);
+    assert_eq!(sent[1].1, "https://api.linear.app/graphql");
+    assert_eq!(sent[1].2["variables"]["after"], Value::Null);
+    assert_eq!(sent[2].2["variables"]["after"], "cursor-1");
+    // An admin gets the whole workspace's open issues.
+    assert!(sent[1].2["variables"]["filter"].get("or").is_none());
 }
 
 #[tokio::test]
@@ -193,7 +204,10 @@ async fn reading_stops_at_the_limit() {
     });
     let (linear, proxy) = source(
         Some(connection(true)),
-        CannedProxy::new(vec![page(json!([issue.clone(), issue]), Some("more"))]),
+        CannedProxy::new(vec![
+            viewer(true),
+            page(json!([issue.clone(), issue]), Some("more")),
+        ]),
     );
 
     let issues = linear
@@ -203,7 +217,7 @@ async fn reading_stops_at_the_limit() {
         .expect("connected");
 
     assert_eq!(issues.len(), 2);
-    assert_eq!(proxy.sent.lock().unwrap()[0].2["variables"]["first"], 2);
+    assert_eq!(proxy.sent.lock().unwrap()[1].2["variables"]["first"], 2);
 }
 
 #[tokio::test]
@@ -224,10 +238,13 @@ async fn without_an_enabled_connection_linear_is_not_connected() {
 async fn graphql_errors_and_rate_limits_are_reported() {
     let (linear, _) = source(
         Some(connection(true)),
-        CannedProxy::new(vec![(
-            StatusCode::OK,
-            json!({ "data": null, "errors": [{ "message": "Authentication required" }] }),
-        )]),
+        CannedProxy::new(vec![
+            viewer(true),
+            (
+                StatusCode::OK,
+                json!({ "data": null, "errors": [{ "message": "Authentication required" }] }),
+            ),
+        ]),
     );
     assert!(matches!(
         linear.open_issues(&user(), 50).await,
@@ -242,4 +259,20 @@ async fn graphql_errors_and_rate_limits_are_reported() {
         linear.open_issues(&user(), 50).await,
         Err(LinearSourceError::RateLimited)
     ));
+}
+
+#[tokio::test]
+async fn someone_who_isnt_an_admin_gets_only_their_own_issues() {
+    let (linear, proxy) = source(
+        Some(connection(true)),
+        CannedProxy::new(vec![viewer(false), page(json!([]), None)]),
+    );
+
+    linear.open_issues(&user(), 50).await.expect("read");
+
+    let sent = proxy.sent.lock().unwrap();
+    let filter = &sent[1].2["variables"]["filter"];
+    assert_eq!(filter["or"][0]["assignee"]["isMe"]["eq"], true);
+    assert_eq!(filter["or"][1]["creator"]["isMe"]["eq"], true);
+    assert_eq!(filter["updatedAt"]["gt"], "-P90D");
 }

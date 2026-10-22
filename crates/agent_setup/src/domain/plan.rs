@@ -388,7 +388,8 @@ pub fn render(plan: &PlanText<'_>) -> String {
         .any(|app| app.source == ImportSource::Linear && !app.to_import.is_empty())
     {
         text.push_str(
-            "_From Linear, Macro brings open issues updated in the last 90 days, as tasks._\n",
+            "_From Linear, Macro brings open issues updated in the last 90 days, as tasks: the \
+             whole workspace's if you're a Linear admin, otherwise yours._\n",
         );
     }
 

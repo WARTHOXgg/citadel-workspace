@@ -25,19 +25,14 @@ const LINEAR_GRAPHQL_URL: &str = "https://api.linear.app/graphql";
 /// Issues per page; Linear allows up to 250.
 const PAGE_SIZE: usize = 100;
 
-/// Open issues updated in the last 90 days, newest first. `state.type`
-/// covers custom workflow states that the name alone wouldn't map.
+/// Whether the person administers their Linear workspace.
+const VIEWER: &str = "query Viewer { viewer { admin } }";
+
+/// Issues matching `$filter`, newest first. `state.type` covers custom
+/// workflow states that the name alone wouldn't map.
 const OPEN_ISSUES: &str = r#"
-query OpenIssues($first: Int!, $after: String) {
-  issues(
-    first: $first
-    after: $after
-    orderBy: updatedAt
-    filter: {
-      state: { type: { nin: ["completed", "canceled"] } }
-      updatedAt: { gt: "-P90D" }
-    }
-  ) {
+query OpenIssues($first: Int!, $after: String, $filter: IssueFilter) {
+  issues(first: $first, after: $after, orderBy: updatedAt, filter: $filter) {
     nodes {
       identifier
       title
@@ -87,10 +82,20 @@ impl<Store: ConnectionStore, Proxy> PipedreamLinearIssues<Store, Proxy> {
 }
 
 #[derive(Deserialize)]
-struct Response {
-    data: Option<Data>,
+struct Response<T> {
+    data: Option<T>,
     #[serde(default)]
     errors: Vec<GraphqlError>,
+}
+
+#[derive(Deserialize)]
+struct ViewerData {
+    viewer: Viewer,
+}
+
+#[derive(Deserialize)]
+struct Viewer {
+    admin: bool,
 }
 
 #[derive(Deserialize)]
@@ -174,6 +179,60 @@ impl From<Issue> for LinearIssueMeta {
     }
 }
 
+/// Open issues updated in the last 90 days. A workspace admin (usually a
+/// founder or lead setting the company up) gets the whole workspace's; anyone
+/// else the issues assigned to or created by them, so an engineer doesn't
+/// take in the whole team's backlog.
+fn open_issues_filter(admin: bool) -> serde_json::Value {
+    let mut filter = json!({
+        "state": { "type": { "nin": ["completed", "canceled"] } },
+        "updatedAt": { "gt": "-P90D" },
+    });
+    if !admin {
+        filter["or"] = json!([
+            { "assignee": { "isMe": { "eq": true } } },
+            { "creator": { "isMe": { "eq": true } } },
+        ]);
+    }
+    filter
+}
+
+/// One GraphQL request through the proxy.
+async fn graphql<Proxy: ConnectedAppProxy, T: serde::de::DeserializeOwned>(
+    proxy: &Proxy,
+    connection: &PipedreamConnection,
+    body: &serde_json::Value,
+) -> Result<T, LinearSourceError> {
+    let headers =
+        HeaderMap::from_iter([(CONTENT_TYPE, HeaderValue::from_static("application/json"))]);
+    let response = proxy
+        .proxy(
+            connection,
+            http::Method::POST,
+            LINEAR_GRAPHQL_URL,
+            &headers,
+            Some(body),
+        )
+        .await
+        .map_err(|error| LinearSourceError::Transport(rootcause::report!("{error:#}")))?;
+    if response.status == http::StatusCode::TOO_MANY_REQUESTS {
+        return Err(LinearSourceError::RateLimited);
+    }
+    if !response.status.is_success() {
+        return Err(LinearSourceError::Api(format!(
+            "Linear answered {}",
+            response.status
+        )));
+    }
+    let page: Response<T> = serde_json::from_str(&response.body)
+        .map_err(|error| LinearSourceError::Api(format!("unreadable Linear response: {error}")))?;
+    if let Some(error) = page.errors.first() {
+        return Err(LinearSourceError::Api(error.message.clone()));
+    }
+    page.data
+        .ok_or_else(|| LinearSourceError::Api("Linear sent no data".to_owned()))
+}
+
 // `async_trait`: the import service holds the source as `Arc<dyn …>`.
 #[async_trait]
 impl<Store, Proxy> LinearIssueSource for PipedreamLinearIssues<Store, Proxy>
@@ -193,8 +252,9 @@ where
         let Some(connection) = self.connection(user).await? else {
             return Ok(None);
         };
-        let headers =
-            HeaderMap::from_iter([(CONTENT_TYPE, HeaderValue::from_static("application/json"))]);
+        let viewer: ViewerData =
+            graphql(proxy.as_ref(), &connection, &json!({ "query": VIEWER })).await?;
+        let filter = open_issues_filter(viewer.viewer.admin);
         let mut issues: Vec<LinearIssueMeta> = Vec::new();
         let mut after: Option<String> = None;
         while issues.len() < limit {
@@ -203,36 +263,10 @@ where
                 "variables": {
                     "first": PAGE_SIZE.min(limit - issues.len()),
                     "after": after,
+                    "filter": filter,
                 },
             });
-            let response = proxy
-                .proxy(
-                    &connection,
-                    http::Method::POST,
-                    LINEAR_GRAPHQL_URL,
-                    &headers,
-                    Some(&body),
-                )
-                .await
-                .map_err(|error| LinearSourceError::Transport(rootcause::report!("{error:#}")))?;
-            if response.status == http::StatusCode::TOO_MANY_REQUESTS {
-                return Err(LinearSourceError::RateLimited);
-            }
-            if !response.status.is_success() {
-                return Err(LinearSourceError::Api(format!(
-                    "Linear answered {}",
-                    response.status
-                )));
-            }
-            let page: Response = serde_json::from_str(&response.body).map_err(|error| {
-                LinearSourceError::Api(format!("unreadable Linear response: {error}"))
-            })?;
-            if let Some(error) = page.errors.first() {
-                return Err(LinearSourceError::Api(error.message.clone()));
-            }
-            let Some(data) = page.data else {
-                return Err(LinearSourceError::Api("Linear sent no issues".to_owned()));
-            };
+            let data: Data = graphql(proxy.as_ref(), &connection, &body).await?;
             issues.extend(data.issues.nodes.into_iter().map(LinearIssueMeta::from));
             match data.issues.page_info {
                 PageInfo {

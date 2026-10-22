@@ -62,7 +62,9 @@ from this import's other databases into it are not linked.
 - `src/outbound/pipedream_linear.rs` + `src/domain/service/linear_discovery.rs`:
   Linear discovery, open issues updated in the last 90 days read over Linear's
   GraphQL API through the user's Pipedream grant (`with_linear_source`), staged
-  for a plan; hosts without a Linear source refuse Linear discovery.
+  for a plan: the whole workspace's for a Linear admin, otherwise those
+  assigned to or created by the user. Hosts without a Linear source refuse
+  Linear discovery.
 - `src/domain/service/notion_workspace.rs` (+ `plan`, `triage`, `sharing`,
   `object`, `write`, `values`, `report`): the Notion workspace import —
   planning, the decision model, who sees what, writing one object (claim,

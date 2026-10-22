@@ -22,8 +22,9 @@ Looking through an app:
   workspace and decides per object (copy, tasks, skip, by hand). Candidates are
   the plan's top items; each stands for everything under it. Approval writes
   the plan through `start_notion_write`, under a review id setup makes.
-- Linear and Slack: `start_discovery` lists open Linear issues (last 90 days)
-  or the Slack channels; approved rows go to `run_import`.
+- Linear and Slack: `start_discovery` lists open Linear issues (last 90 days;
+  the whole workspace's for a Linear admin, otherwise the person's own) or the
+  Slack channels; approved rows go to `run_import`.
 
 ## Start here
 

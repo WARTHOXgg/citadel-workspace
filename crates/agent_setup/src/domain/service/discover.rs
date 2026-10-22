@@ -143,8 +143,9 @@ impl AgentSetupService {
             DiscoveryStatus::Ready => match source {
                 ImportSource::Notion => Some(self.notion_note(user).await?),
                 ImportSource::Linear => Some(
-                    "Macro listed the open issues updated in the last 90 days; they come in as \
-                     tasks."
+                    "Macro listed the open issues updated in the last 90 days: the whole \
+                     workspace's for a Linear admin, otherwise the person's own. They come in \
+                     as tasks."
                         .to_owned(),
                 ),
                 ImportSource::Slack if !has_team => Some(self.slack_needs_team()),

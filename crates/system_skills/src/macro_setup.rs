@@ -29,7 +29,7 @@ Do everything else yourself. Ask only what you can't work out, and ask it in the
 
 ## What happens to each tool
 
-- `import` (Notion, Linear, Slack). Notion: Macro's planner reads the whole workspace and sorts it (copy, tasks, leave in Notion, by hand); each candidate is a top-level item standing for everything under it. Linear: open issues updated in the last 90 days, as tasks. Running setup again looks for anything new.
+- `import` (Notion, Linear, Slack). Notion: Macro's planner reads the whole workspace and sorts it (copy, tasks, leave in Notion, by hand); each candidate is a top-level item standing for everything under it. Linear: open issues updated in the last 90 days, as tasks (the whole workspace's for a Linear admin, otherwise the person's own). Running setup again looks for anything new.
 - Slack brings the channels and who's in them, not their messages, as team channels, so it needs a Macro team. For history a team admin uploads Slack's export ZIP; the link is in `not_covered`.
 - `import_later` (e.g. Jira, Asana, HubSpot): Macro can't import them yet. For a CRM, offer the CSV import from `not_covered`.
 - `keep` (file storage, GitHub, Calendar): stays where it is and Macro works with it live. Nothing is imported, and that's intended. Calendar comes with the email link.
