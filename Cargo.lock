@@ -252,6 +252,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_api_keys"
+version = "0.1.0"
+dependencies = [
+ "ai_billing",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "cursor_api_key",
+ "macro_db_migrator",
+ "macro_user_id",
+ "macro_uuid",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "workspace-hack",
+ "zeroize",
+]
+
+[[package]]
 name = "agent_changes"
 version = "0.1.0"
 dependencies = [
