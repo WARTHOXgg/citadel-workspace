@@ -14,6 +14,7 @@ use agent_runtime_protocol::domain::connection::{RuntimeConnection, ServerChanne
 use agent_runtime_protocol::domain::schema::v0::SystemEvent;
 use agent_session::domain::model::AgentSessionId;
 use ai_billing::domain::{AiAdmissionService, DisabledAiAdmissionService};
+use agent_api_keys::domain::{AgentKeys, NoAgentKeys};
 use dashmap::DashMap;
 use model_owner::Owner;
 
@@ -69,6 +70,7 @@ impl Drop for LiveAgent {
 pub struct InMemAgentManager {
     engine: Arc<dyn TurnEngine>,
     admission: Arc<dyn AiAdmissionService>,
+    agent_keys: Arc<dyn AgentKeys>,
     model_access: Arc<dyn crate::domain::model_access::InMemModelAccess>,
     frames: Arc<dyn FrameSource>,
     mcp: Arc<dyn DynMcpToolConnector>,
@@ -96,6 +98,7 @@ impl InMemAgentManager {
             engine,
             model_access,
             admission: Arc::new(DisabledAiAdmissionService),
+            agent_keys: Arc::new(NoAgentKeys),
             frames,
             mcp,
             enable_dev_commands: false,
@@ -110,6 +113,14 @@ impl InMemAgentManager {
     #[must_use]
     pub fn with_admission(mut self, admission: Arc<dyn AiAdmissionService>) -> Self {
         self.admission = admission;
+        self
+    }
+
+    /// Let agents' turns run on their own API keys. Without this, every turn
+    /// runs on Macro's allowance.
+    #[must_use]
+    pub fn with_agent_keys(mut self, agent_keys: Arc<dyn AgentKeys>) -> Self {
+        self.agent_keys = agent_keys;
         self
     }
 
@@ -190,6 +201,7 @@ impl InMemAgentManager {
             owner: facts.owner,
             engine: Arc::clone(&self.engine),
             admission: Arc::clone(&self.admission),
+            agent_keys: Arc::clone(&self.agent_keys),
             model_access: Arc::clone(&self.model_access),
             store: Arc::clone(&self.store),
             active_cancel: std::sync::Mutex::new(Vec::new()),
