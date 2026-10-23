@@ -110,5 +110,8 @@ fn an_agents_key_replaces_the_plan_with_its_providers_models() {
 
     let plan = SessionModels::new(ModelAccess::Free, None);
     assert_eq!(plan.models(&supported), [FREE_MODEL]);
-    assert_eq!(plan.default_model("anthropic/claude-sonnet-5-5"), FREE_MODEL);
+    assert_eq!(
+        plan.default_model("anthropic/claude-sonnet-5-5"),
+        FREE_MODEL
+    );
 }

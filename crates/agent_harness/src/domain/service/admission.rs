@@ -75,7 +75,9 @@ where
         self.agent_keys
             .usable_provider(session.bot_id.as_uuid())
             .await
-            .inspect_err(|error| tracing::error!(error = ?error, "could not read the agent's API key"))
+            .inspect_err(
+                |error| tracing::error!(error = ?error, "could not read the agent's API key"),
+            )
             .ok()
             .flatten()
             .is_some()

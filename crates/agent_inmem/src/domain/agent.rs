@@ -275,7 +275,9 @@ impl AgentState {
             .agent_keys
             .usable_provider(bot)
             .await
-            .inspect_err(|error| tracing::error!(error = ?error, "could not read the agent's API key"))
+            .inspect_err(
+                |error| tracing::error!(error = ?error, "could not read the agent's API key"),
+            )
             .ok()
             .flatten();
         Ok(SessionModels::new(access, agent_key))
@@ -306,9 +308,12 @@ impl AgentState {
 
     /// The bot id of the agent this session belongs to, if any.
     fn agent_bot(&self) -> Option<macro_uuid::Uuid> {
-        self.store
-            .get(&self.session_id)
-            .and_then(|session| session.identity.as_ref().map(|identity| identity.bot.as_uuid()))
+        self.store.get(&self.session_id).and_then(|session| {
+            session
+                .identity
+                .as_ref()
+                .map(|identity| identity.bot.as_uuid())
+        })
     }
 
     fn session_config_options(&self, access: SessionModels) -> Vec<SessionConfigOption> {

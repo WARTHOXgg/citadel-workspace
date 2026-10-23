@@ -29,7 +29,8 @@ impl<Entitlements: EntitlementSource> KeyPlans for EntitlementKeyPlans<Entitleme
         let payer = match owner {
             AgentOwner::User(user) => user.clone(),
             AgentOwner::Team(team_id) => {
-                let Some(payer) = self.entitlements.team_payer(*team_id).await.map_err(plan)? else {
+                let Some(payer) = self.entitlements.team_payer(*team_id).await.map_err(plan)?
+                else {
                     return Ok(false);
                 };
                 payer

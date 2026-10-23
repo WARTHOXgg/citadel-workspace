@@ -20,7 +20,10 @@ impl EntitlementSource for Plans {
     ) -> std::result::Result<Entitlement, BillingError> {
         Ok(Entitlement {
             unlimited: self.unlimited,
-            ..Entitlement::personal(MacroUserIdStr::try_from(user.as_ref().to_owned()).expect("user id"), self.tier)
+            ..Entitlement::personal(
+                MacroUserIdStr::try_from(user.as_ref().to_owned()).expect("user id"),
+                self.tier,
+            )
         })
     }
 

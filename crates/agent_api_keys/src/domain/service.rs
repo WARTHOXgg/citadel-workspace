@@ -49,7 +49,9 @@ impl<Repo: AgentKeyRepo, Cipher: AgentKeyCipher, Plans: KeyPlans>
     /// The key is parsed before anything else, so a malformed value never
     /// reaches KMS or the table.
     pub async fn set(&self, agent: &KeyedAgent, supplied: &str) -> Result<AgentKeyView> {
-        let provider = agent.key_provider().ok_or(AgentKeyError::UnsupportedAgent)?;
+        let provider = agent
+            .key_provider()
+            .ok_or(AgentKeyError::UnsupportedAgent)?;
         let key =
             ProviderApiKey::parse(provider, supplied).map_err(|_| AgentKeyError::MalformedKey)?;
         if !self.plans.allows_keys(&agent.owner).await? {

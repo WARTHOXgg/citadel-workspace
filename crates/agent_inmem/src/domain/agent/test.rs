@@ -507,11 +507,13 @@ impl agent_api_keys::domain::AgentKeys for OneAgentKey {
         &self,
         bot_id: macro_uuid::Uuid,
     ) -> agent_api_keys::domain::Result<Option<agent_api_keys::domain::UsableAgentKey>> {
-        Ok(self.0.map(|provider| agent_api_keys::domain::UsableAgentKey {
-            bot_id,
-            key: agent_api_keys::domain::ProviderApiKey::parse(provider, "sk-ant-api03-abc")
-                .expect("valid key"),
-        }))
+        Ok(self
+            .0
+            .map(|provider| agent_api_keys::domain::UsableAgentKey {
+                bot_id,
+                key: agent_api_keys::domain::ProviderApiKey::parse(provider, "sk-ant-api03-abc")
+                    .expect("valid key"),
+            }))
     }
 }
 

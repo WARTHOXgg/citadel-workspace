@@ -158,7 +158,10 @@ async fn only_in_memory_agents_on_anthropic_or_openai_models_take_a_key() {
             .set(&agent(harness, model), "sk-ant-api03-abc")
             .await
             .expect_err("unsupported");
-        assert!(matches!(error, AgentKeyError::UnsupportedAgent), "{harness} {model}");
+        assert!(
+            matches!(error, AgentKeyError::UnsupportedAgent),
+            "{harness} {model}"
+        );
         assert_eq!(*service.cipher.encrypted.lock().expect("lock"), 0);
     }
 }
@@ -167,7 +170,10 @@ async fn only_in_memory_agents_on_anthropic_or_openai_models_take_a_key() {
 async fn a_key_for_another_provider_or_a_free_plan_never_reaches_kms() {
     let service = service(true);
     let error = service
-        .set(&agent("in-memory", "openai/gpt-6-astra"), "sk-ant-api03-abc")
+        .set(
+            &agent("in-memory", "openai/gpt-6-astra"),
+            "sk-ant-api03-abc",
+        )
         .await
         .expect_err("an Anthropic key is not an OpenAI key");
     assert!(matches!(error, AgentKeyError::MalformedKey));
@@ -188,10 +194,17 @@ async fn turns_run_on_the_key_only_while_the_agent_and_plan_still_fit_it() {
     let service = service(true);
     let bot: Uuid = BOT.parse().expect("uuid");
     let keyed = agent("in-memory", "anthropic/claude-sonnet-5-5");
-    service.set(&keyed, "sk-ant-api03-abc").await.expect("saved");
+    service
+        .set(&keyed, "sk-ant-api03-abc")
+        .await
+        .expect("saved");
 
     *service.repo.agent.lock().expect("lock") = Some(keyed);
-    let key = service.usable_key(bot).await.expect("read").expect("usable");
+    let key = service
+        .usable_key(bot)
+        .await
+        .expect("read")
+        .expect("usable");
     assert_eq!(key.key.expose(), "sk-ant-api03-abc");
 
     *service.repo.agent.lock().expect("lock") = Some(agent("in-memory", "openai/gpt-6-astra"));
@@ -201,14 +214,20 @@ async fn turns_run_on_the_key_only_while_the_agent_and_plan_still_fit_it() {
         "an agent moved to another provider's model runs on Macro usage"
     );
 
-    *service.repo.agent.lock().expect("lock") = Some(agent("in-memory", "anthropic/claude-sonnet-5-5"));
+    *service.repo.agent.lock().expect("lock") =
+        Some(agent("in-memory", "anthropic/claude-sonnet-5-5"));
     *service.plans.0.lock().expect("lock") = false;
     assert!(
         service.usable_key(bot).await.expect("read").is_none(),
         "a downgraded owner keeps the key but turns do not run on it"
     );
     assert!(
-        service.view(&agent("in-memory", "anthropic/claude-sonnet-5-5")).await.expect("view").key.is_some(),
+        service
+            .view(&agent("in-memory", "anthropic/claude-sonnet-5-5"))
+            .await
+            .expect("view")
+            .key
+            .is_some(),
         "the key is still shown, so it can be removed"
     );
 }
