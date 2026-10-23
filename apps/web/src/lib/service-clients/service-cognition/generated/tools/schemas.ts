@@ -4246,6 +4246,9 @@ export const CreateRoutine = z.object({
         });
       }
     }),
+    requiredApps: z
+      .array(z.object({ appSlug: z.string(), name: z.string() }))
+      .optional(),
   }),
 });
 
@@ -16105,6 +16108,9 @@ export const UpdateRoutine = z.object({
               });
             }
           }),
+          requiredApps: z
+            .array(z.object({ appSlug: z.string(), name: z.string() }))
+            .optional(),
         }),
         type: z.literal('configuration'),
       }),
