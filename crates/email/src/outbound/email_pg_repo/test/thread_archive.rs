@@ -1,6 +1,8 @@
 use super::thread_unread::service;
 use super::*;
-use crate::domain::models::{EmailErr, MAX_BULK_ARCHIVE_THREADS, SetThreadsArchivedResult};
+use crate::domain::models::{
+    EmailErr, MAX_BULK_ARCHIVE_THREADS, PendingLabelWrite, SetThreadsArchivedResult,
+};
 use crate::domain::{ports::EmailMessageEnqueuer, service::EmailServiceImpl};
 use crm::domain::service::NoOpCrmService;
 use frecency::{domain::services::FrecencyQueryServiceImpl, outbound::postgres::FrecencyPgStorage};
@@ -371,7 +373,7 @@ async fn archive_rejects_inaccessible_and_empty_threads(
     )
 )]
 async fn failed_archive_rolls_back_inbox_label_removal(pool: Pool<Postgres>) -> anyhow::Result<()> {
-    let service = service(pool);
+    let service = service(pool.clone());
     let thread = Uuid::parse_str("33333333-3333-3333-3333-333333333333")?;
     assert!(matches!(
         service
@@ -384,6 +386,86 @@ async fn failed_archive_rolls_back_inbox_label_removal(pool: Pool<Postgres>) -> 
         Err(EmailErr::RepoErr(_))
     ));
     assert_inbox_state(&service.email_repo, thread, true).await?;
+    assert!(pending_markers(&pool).await?.is_empty());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../fixtures",
+        scripts("email_thread_labels", "email_thread_unread", "email_thread_archive")
+    )
+)]
+async fn staged_inbox_change_commits_with_its_pending_marker(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = EmailPgRepo::new(pool.clone());
+    let thread = Uuid::parse_str("11111111-1111-1111-1111-111111111111")?;
+    let link = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")?;
+    let first = Uuid::parse_str("11111111-aaaa-aaaa-aaaa-111111111111")?;
+    let second = Uuid::parse_str("11111111-bbbb-bbbb-bbbb-111111111111")?;
+    let write_id = Uuid::from_u128(0xf1);
+
+    repo.set_thread_inbox_state(
+        thread,
+        link,
+        &[first, second],
+        false,
+        false,
+        Some(PendingLabelWrite {
+            message_ids: &[first],
+            write_id,
+        }),
+    )
+    .await?;
+
+    assert_inbox_state(&repo, thread, false).await?;
+    assert_eq!(
+        pending_markers(&pool).await?,
+        vec![(first, "INBOX".to_string(), write_id)]
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../fixtures",
+        scripts(
+            "email_thread_labels",
+            "email_thread_unread",
+            "email_thread_archive",
+            "email_thread_archive_failure"
+        )
+    )
+)]
+async fn failed_staged_inbox_change_leaves_no_pending_marker(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = EmailPgRepo::new(pool.clone());
+    let thread = Uuid::parse_str("33333333-3333-3333-3333-333333333333")?;
+    let link = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-bbbbbbbbbbbb")?;
+    let message = Uuid::parse_str("33333333-aaaa-aaaa-aaaa-333333333333")?;
+
+    assert!(
+        repo.set_thread_inbox_state(
+            thread,
+            link,
+            &[message],
+            false,
+            false,
+            Some(PendingLabelWrite {
+                message_ids: &[message],
+                write_id: Uuid::from_u128(0xf1),
+            }),
+        )
+        .await
+        .is_err()
+    );
+
+    assert_inbox_state(&repo, thread, true).await?;
+    assert!(pending_markers(&pool).await?.is_empty());
     Ok(())
 }
 

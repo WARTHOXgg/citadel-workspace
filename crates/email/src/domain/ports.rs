@@ -3,9 +3,9 @@ use crate::domain::models::{
     CreatedDraft, DeletedUserDraft, DraftDeletion, EmailErr, EmailFilter, EmailInboxDetails,
     EmailThreadMailProjection, EmailThreadMetadata, EmailThreadPreview, EnrichedEmailThreadPreview,
     GetEmailsRequest, Label, Link, LinkLabel, Message, MessageAttachment, MessageLabel, MessageRow,
-    MessageTimestamps, ParsedAddresses, ParsedMessage, ParsedThread, PreviewCursorQuery,
-    RecipientType, ResolvedDraftInput, ResolvedSendingInbox, SavedUserDraft, SenderPolicy,
-    SendingInboxRequest, SetThreadsArchivedResult, SettledDraftIds, SimpleMessage,
+    MessageTimestamps, ParsedAddresses, ParsedMessage, ParsedThread, PendingLabelWrite,
+    PreviewCursorQuery, RecipientType, ResolvedDraftInput, ResolvedSendingInbox, SavedUserDraft,
+    SenderPolicy, SendingInboxRequest, SetThreadsArchivedResult, SettledDraftIds, SimpleMessage,
     SimpleMessageInfo, SourcedAttachment, Thread, ThreadRow, UpdateThreadLabelsResult,
     UpsertEmailFilterInput, UpsertedContacts, UserEmailLink, UserProvider,
 };
@@ -418,15 +418,17 @@ pub trait EmailRepo: Send + Sync + 'static {
         link_id: Uuid,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
 
-    /// Mark a label change on the link's messages as pending until Gmail
-    /// confirms it, so inbox sync keeps the local state meanwhile. A newer
-    /// write to the same label on a message replaces its marker.
-    fn mark_pending_label_writes(
+    /// Atomically add or remove a label on messages and mark `pending`'s
+    /// messages as waiting on that Gmail write, so inbox sync keeps their
+    /// local state until Gmail confirms it. A newer write to the same label on
+    /// a message replaces its marker.
+    fn set_message_label_state(
         &self,
         link_id: Uuid,
         message_ids: &[Uuid],
         provider_label_id: &str,
-        write_id: Uuid,
+        add: bool,
+        pending: PendingLabelWrite<'_>,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
 
     /// Remove `write_id`'s pending markers, keeping those a newer write replaced.
@@ -436,18 +438,21 @@ pub trait EmailRepo: Send + Sync + 'static {
         write_id: Uuid,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
 
-    /// Atomically update the UNREAD label assignments and the message/thread read flags.
+    /// Atomically update the UNREAD label assignments and the message/thread read flags,
+    /// marking `pending`'s messages as waiting on that Gmail write.
     /// `message_ids` must be the messages of the already-authorized thread and inbox.
-    /// An error leaves all three representations unchanged.
+    /// An error leaves all three representations and the markers unchanged.
     fn set_thread_read_state(
         &self,
         thread_id: Uuid,
         link_id: Uuid,
         message_ids: &[Uuid],
         is_read: bool,
+        pending: PendingLabelWrite<'_>,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
 
-    /// Atomically change INBOX assignments and the thread's visibility.
+    /// Atomically change INBOX assignments and the thread's visibility, and
+    /// mark `pending`'s messages as waiting on that Gmail write when given.
     /// The message IDs belong to the authorized thread/inbox. Visibility is
     /// separate from `add` so an enqueue failure can restore the prior flag
     /// while reverting only the assignments changed by that operation.
@@ -458,6 +463,7 @@ pub trait EmailRepo: Send + Sync + 'static {
         message_ids: &[Uuid],
         add: bool,
         inbox_visible: bool,
+        pending: Option<PendingLabelWrite<'_>>,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
 
     /// Update the read status for a batch of messages, verified by link_id.
