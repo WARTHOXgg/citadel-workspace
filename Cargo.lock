@@ -8690,6 +8690,8 @@ dependencies = [
  "macro_db_migrator",
  "macro_env",
  "macro_env_var",
+ "macro_event_broker",
+ "macro_event_topics",
  "macro_service_urls",
  "macro_user_id",
  "macro_uuid",
