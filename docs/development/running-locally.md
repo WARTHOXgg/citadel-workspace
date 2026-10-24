@@ -446,6 +446,12 @@ If you started without the flag and suspect a stale image, press `q`. Then start
 
 `just stack` runs the same stack without an attached terminal. There is no hotkey loop and no dev server. The frontend is built once and served statically by the proxy. The whole product lives behind one origin. A finished `up` leaves only Docker containers running.
 
+Both headless and attached startup prepare the browser WebAssembly packages
+through `bun run dev:prepare`. A fresh worktree builds them before serving the app;
+later starts reuse the generated packages when they are current. With
+`--no-doppler`, local Pipedream placeholders let the agent harness start, but
+Pipedream integrations still require real credentials supplied through `--env-file`.
+
 ```bash
 just stack up                  # bring everything up, print URLs, return
 just stack status --json      # machine-readable state (containers, health, URLs)
