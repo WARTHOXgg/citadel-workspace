@@ -228,8 +228,9 @@ reconcile. Permanent failures roll back the failed intent.
 Mark Done and Mark Not Done on a selection, even of one row, send one
 `setEmailThreadsArchived` per 100 threads (REST: `PATCH /email/threads/archived`).
 The server sends Gmail one label write per inbox, for only the messages whose
-labels change, and omits threads it could not change; those settle as rejected
-while their siblings stay done.
+labels change, and lists the threads it could not change; those settle as
+rejected, with their unchanged state reloaded, while their siblings stay done.
+A database or queue outage that changes nothing fails the whole request.
 Check Signal/Noise removal and All's done indicator, then Undo/Redo, including an
 offline action followed by reconnect. Also wait for provider/metadata synchronization
 before Undo, and repeat after reloading: an archived received thread can lose its

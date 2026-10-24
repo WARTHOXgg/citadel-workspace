@@ -129,15 +129,18 @@ async fn bulk_archive_returns_primary_state_for_each_thread_without_reading_the_
         .thread_reader
         .set_threads(vec![soup_email_thread(first), soup_email_thread(second)]);
     let response = harness.execute_authenticated_mutation(&format!(
-        r#"mutation {{ setEmailThreadsArchived(input: {{threadIds: ["{first}", "{second}"], archived: true}}) {{__typename id inboxVisible}} }}"#
+        r#"mutation {{ setEmailThreadsArchived(input: {{threadIds: ["{first}", "{second}"], archived: true}}) {{ threads {{__typename id inboxVisible}} failedThreadIds }} }}"#
     )).await;
     assert!(response.errors.is_empty(), "{:?}", response.errors);
     assert_eq!(
         response.data.into_json().unwrap()["setEmailThreadsArchived"],
-        serde_json::json!([
-            {"__typename": "GraphqlSoupEmailThread", "id": first.to_string(), "inboxVisible": false},
-            {"__typename": "GraphqlSoupEmailThread", "id": second.to_string(), "inboxVisible": false},
-        ])
+        serde_json::json!({
+            "threads": [
+                {"__typename": "GraphqlSoupEmailThread", "id": first.to_string(), "inboxVisible": false},
+                {"__typename": "GraphqlSoupEmailThread", "id": second.to_string(), "inboxVisible": false},
+            ],
+            "failedThreadIds": [],
+        })
     );
     assert_eq!(harness.thread_reads.load(Ordering::SeqCst), 0);
     assert_eq!(

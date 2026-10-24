@@ -26,13 +26,15 @@ export const soupOptimisticResolvers = [
     id: String(input.threadId),
     inboxVisible: !input.archived,
   })),
-  optimisticResolver(SetEmailThreadsArchivedDocument, ({ input }) =>
-    input.threadIds.map((id) => ({
-      __typename: 'GraphqlSoupEmailThread',
+  // Which threads fail is the server's call; it reloads them with their
+  // unchanged state.
+  optimisticResolver(SetEmailThreadsArchivedDocument, ({ input }) => ({
+    threads: input.threadIds.map((id) => ({
+      __typename: 'GraphqlSoupEmailThread' as const,
       id: String(id),
       inboxVisible: !input.archived,
-    }))
-  ),
+    })),
+  })),
   optimisticResolver(UpdateNotificationsDocument, ({ input }) =>
     input.notificationIds.map((id) => ({
       __typename: 'GraphqlNotification',

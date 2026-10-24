@@ -211,24 +211,36 @@ describe('GraphQL email archive writes', () => {
 });
 
 describe('bulk email archive writes', () => {
-  it('archives every selected thread with one GraphQL mutation and rejects threads the server skipped', async () => {
+  it('archives every selected thread with one GraphQL mutation and rejects only the threads the server names', async () => {
     mocks.mutation.mockReturnValue({
       toPromise: async () => ({
         data: {
-          setEmailThreadsArchived: [
-            {
-              __typename: 'GraphqlSoupEmailThread',
-              id: 'archived',
-              inboxVisible: false,
-            },
-          ],
+          setEmailThreadsArchived: {
+            // A committed thread the server could not reload is absent, not failed.
+            threads: [
+              {
+                __typename: 'GraphqlSoupEmailThread',
+                id: 'skipped',
+                inboxVisible: true,
+              },
+            ],
+            failedThreadIds: ['skipped'],
+          },
         },
       }),
     });
-    const results = await archiveEmailThreads(['archived', 'skipped'], true);
+    const results = await archiveEmailThreads(
+      ['archived', 'skipped', 'unreloaded'],
+      true
+    );
     expect(mocks.mutation).toHaveBeenCalledExactlyOnceWith(
       SetEmailThreadsArchivedDocument,
-      { input: { threadIds: ['archived', 'skipped'], archived: true } },
+      {
+        input: {
+          threadIds: ['archived', 'skipped', 'unreloaded'],
+          archived: true,
+        },
+      },
       expect.objectContaining({ optimisticMutation: { revalidations: [] } })
     );
     expect(
@@ -238,24 +250,28 @@ describe('bulk email archive writes', () => {
         { input: { threadIds: ['archived', 'skipped'], archived: true } }
       )?.response
     ).toEqual({
-      setEmailThreadsArchived: [
-        {
-          __typename: 'GraphqlSoupEmailThread',
-          id: 'archived',
-          inboxVisible: false,
-        },
-        {
-          __typename: 'GraphqlSoupEmailThread',
-          id: 'skipped',
-          inboxVisible: false,
-        },
-      ],
+      setEmailThreadsArchived: {
+        threads: [
+          {
+            __typename: 'GraphqlSoupEmailThread',
+            id: 'archived',
+            inboxVisible: false,
+          },
+          {
+            __typename: 'GraphqlSoupEmailThread',
+            id: 'skipped',
+            inboxVisible: false,
+          },
+        ],
+      },
     });
     expect(results[0]).toEqual({ status: 'fulfilled', value: 'committed' });
     expect(results[1].status).toBe('rejected');
-    expect(mocks.refresh).toHaveBeenCalledExactlyOnceWith({
-      target: { kind: 'email-archive', threadId: 'archived' },
-    });
+    expect(results[2]).toEqual({ status: 'fulfilled', value: 'committed' });
+    expect(mocks.refresh.mock.calls).toEqual([
+      [{ target: { kind: 'email-archive', threadId: 'archived' } }],
+      [{ target: { kind: 'email-archive', threadId: 'unreloaded' } }],
+    ]);
     expect(mocks.reminders).toHaveBeenCalledOnce();
     expect(mocks.archive).not.toHaveBeenCalled();
   });

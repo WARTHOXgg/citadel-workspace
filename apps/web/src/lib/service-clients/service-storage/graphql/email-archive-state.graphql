@@ -8,8 +8,11 @@ mutation SetEmailThreadArchived($input: SetEmailThreadArchivedInput!) {
 
 mutation SetEmailThreadsArchived($input: SetEmailThreadsArchivedInput!) {
 	setEmailThreadsArchived(input: $input) {
-		__typename
-		id
-		inboxVisible
+		threads {
+			__typename
+			id
+			inboxVisible
+		}
+		failedThreadIds
 	}
 }

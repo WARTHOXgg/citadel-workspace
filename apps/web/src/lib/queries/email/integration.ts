@@ -84,15 +84,15 @@ async function archiveThreadsRequest(
   ids: string[],
   value: boolean
 ): Promise<PromiseSettledResult<EmailArchiveDisposition>[]> {
-  const settle = (updated: ReadonlySet<string>) =>
+  const settle = (failed: ReadonlySet<string>) =>
     ids.map(
       (id): PromiseSettledResult<EmailArchiveDisposition> =>
-        updated.has(id)
-          ? { status: 'fulfilled', value: 'committed' }
-          : {
+        failed.has(id)
+          ? {
               status: 'rejected',
               reason: new Error('Email thread archive state did not change'),
             }
+          : { status: 'fulfilled', value: 'committed' }
     );
   try {
     if (isFeatureEnabled(enableGraphqlSoup)) {
@@ -105,18 +105,20 @@ async function archiveThreadsRequest(
       if (result.kind === 'queued')
         return ids.map(() => ({ status: 'fulfilled', value: 'queued' }));
       await Promise.all(
-        [...result.updatedThreadIds].map((threadId) =>
-          refreshActiveGraphqlSoupQueries({
-            target: { kind: 'email-archive', threadId },
-          })
-        )
+        ids
+          .filter((threadId) => !result.failedThreadIds.has(threadId))
+          .map((threadId) =>
+            refreshActiveGraphqlSoupQueries({
+              target: { kind: 'email-archive', threadId },
+            })
+          )
       );
-      return settle(result.updatedThreadIds);
+      return settle(result.failedThreadIds);
     }
     const response = await throwOnErr(() =>
       emailClient.flagArchivedBatch({ thread_ids: ids, value })
     );
-    return settle(new Set(response.updated_thread_ids));
+    return settle(new Set(response.failed_thread_ids));
   } catch (reason) {
     return ids.map(() => ({ status: 'rejected', reason }));
   }

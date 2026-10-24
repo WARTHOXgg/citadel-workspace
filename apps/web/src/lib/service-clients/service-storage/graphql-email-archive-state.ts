@@ -34,9 +34,9 @@ export async function setGraphqlEmailThreadArchived(
 
 export type GraphqlEmailThreadsArchiveResult =
   | { kind: 'queued' }
-  | { kind: 'committed'; updatedThreadIds: ReadonlySet<string> };
+  | { kind: 'committed'; failedThreadIds: ReadonlySet<string> };
 
-/** One durable write for many threads; the server omits threads it could not change. */
+/** One durable write for many threads; the server names the threads it could not change. */
 export async function setGraphqlEmailThreadsArchived(
   client: Client,
   threadIds: string[],
@@ -59,8 +59,8 @@ export async function setGraphqlEmailThreadsArchived(
   }
   return {
     kind: 'committed',
-    updatedThreadIds: new Set(
-      result.data.setEmailThreadsArchived.map(({ id }) => String(id))
+    failedThreadIds: new Set(
+      result.data.setEmailThreadsArchived.failedThreadIds.map(String)
     ),
   };
 }

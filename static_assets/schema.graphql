@@ -340,10 +340,10 @@ type CompleteMutationRoot {
 	setEmailThreadArchived(input: SetEmailThreadArchivedInput!): GraphqlSoupEmailThread!
 	"""
 	Set archive-based Done on many threads with one provider write per
-	inbox, returning the primary-backed canonical threads that changed.
-	Threads that could not change are omitted.
+	inbox. Returns the threads that could not change and the
+	primary-backed record of every requested thread the caller can load.
 	"""
-	setEmailThreadsArchived(input: SetEmailThreadsArchivedInput!): [GraphqlSoupEmailThread!]!
+	setEmailThreadsArchived(input: SetEmailThreadsArchivedInput!): SetEmailThreadsArchivedPayload!
 	"""
 	Add or remove one label from an accessible email thread and return its authoritative cache record.
 	"""
@@ -10127,6 +10127,21 @@ input SetEmailThreadsArchivedInput {
 	True for Done; false for Mark Not Done or Undo.
 	"""
 	archived: Boolean!
+}
+
+"""
+Result of archiving or unarchiving many email threads.
+"""
+type SetEmailThreadsArchivedPayload {
+	"""
+	Primary-backed record of every requested thread the caller can still
+	load, changed or not.
+	"""
+	threads: [GraphqlSoupEmailThread!]!
+	"""
+	Requested threads whose archive state could not change.
+	"""
+	failedThreadIds: [ID!]!
 }
 
 """

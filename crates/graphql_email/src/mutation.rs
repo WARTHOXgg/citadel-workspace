@@ -452,6 +452,26 @@ impl<O: EmailThreadMutationOutput> DeleteEmailDraftPayload<O> {
     }
 }
 
+/// Result of archiving or unarchiving many email threads.
+pub struct SetEmailThreadsArchivedPayload<O: EmailThreadMutationOutput> {
+    threads: Vec<O::Thread>,
+    failed_thread_ids: Vec<ID>,
+}
+
+/// Result of archiving or unarchiving many email threads.
+#[Object(name = "SetEmailThreadsArchivedPayload")]
+impl<O: EmailThreadMutationOutput> SetEmailThreadsArchivedPayload<O> {
+    /// Primary-backed record of every requested thread the caller can still
+    /// load, changed or not.
+    async fn threads(&self) -> &[O::Thread] {
+        &self.threads
+    }
+    /// Requested threads whose archive state could not change.
+    async fn failed_thread_ids(&self) -> &[ID] {
+        &self.failed_thread_ids
+    }
+}
+
 /// Result of creating or updating an email draft.
 pub struct SaveEmailDraftPayload<O: EmailThreadMutationOutput> {
     draft_id: Uuid,
@@ -789,14 +809,14 @@ where
     }
 
     /// Set archive-based Done on many threads with one provider write per
-    /// inbox, returning the primary-backed canonical threads that changed.
-    /// Threads that could not change are omitted.
+    /// inbox. Returns the threads that could not change and the
+    /// primary-backed record of every requested thread the caller can load.
     #[tracing::instrument(skip_all, err(Debug), fields(thread_count = input.thread_ids.len()))]
     async fn set_email_threads_archived(
         &self,
         ctx: &Context<'_>,
         input: SetEmailThreadsArchivedInput,
-    ) -> async_graphql::Result<Vec<O::Thread>> {
+    ) -> async_graphql::Result<SetEmailThreadsArchivedPayload<O>> {
         let user_id = require_authenticated_user(ctx)?;
         let thread_ids = input
             .thread_ids
@@ -814,15 +834,26 @@ where
         if !result.failed_thread_ids.is_empty() {
             tracing::warn!(failed_thread_ids = ?result.failed_thread_ids, "some email threads kept their archive state");
         }
+        // Failed threads reload too, so their unchanged state replaces the
+        // client's prediction. A committed thread the All Mail projection
+        // omits (e.g. trashed) is simply absent, not failed.
         let threads = futures::future::try_join_all(
             result
                 .updated_thread_ids
-                .into_iter()
-                .map(|thread_id| O::load_email_thread(ctx, user_id.clone(), thread_id)),
+                .iter()
+                .chain(&result.failed_thread_ids)
+                .map(|thread_id| O::load_email_thread(ctx, user_id.clone(), *thread_id)),
         )
         .await
         .map_err(internal_email_error)?;
-        Ok(threads.into_iter().flatten().collect())
+        Ok(SetEmailThreadsArchivedPayload {
+            threads: threads.into_iter().flatten().collect(),
+            failed_thread_ids: result
+                .failed_thread_ids
+                .iter()
+                .map(|thread_id| ID(thread_id.to_string()))
+                .collect(),
+        })
     }
 
     /// Add or remove one label from an accessible email thread and return its authoritative cache record.
