@@ -18,8 +18,12 @@ pub struct GmailOpsPubsubMessage {
 #[derive(Debug, Deserialize, Serialize, Clone, Display)]
 #[serde(rename_all = "snake_case")]
 pub enum GmailOpsOperation {
-    /// Add or remove labels from messages in Gmail
+    /// Add or remove labels from one message in Gmail. Producers enqueue
+    /// `ModifyMessageLabelsBatch`; this form stays decodable so queued and
+    /// retrying messages from earlier releases still drain.
     ModifyMessageLabels(ModifyMessageLabelsPayload),
+    /// Add or remove the same labels on messages with one Gmail request
+    ModifyMessageLabelsBatch(ModifyMessageLabelsBatchPayload),
     /// Delete a label from Gmail
     DeleteLabel(DeleteLabelPayload),
     /// Create a filter to block a sender in Gmail
@@ -41,6 +45,55 @@ pub struct ModifyMessageLabelsPayload {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct ModifyMessageLabelsBatchPayload {
+    /// At most [`MAX_BATCH_MODIFY_MESSAGES`] messages, so the batch is one
+    /// Gmail request
+    pub messages: Vec<GmailMessageRef>,
+    pub labels_to_add: Vec<String>,
+    pub labels_to_remove: Vec<String>,
+}
+
+/// The database and Gmail ids of one message.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GmailMessageRef {
+    pub db_message_id: Uuid,
+    pub provider_message_id: String,
+}
+
+impl From<ModifyMessageLabelsPayload> for ModifyMessageLabelsBatchPayload {
+    fn from(payload: ModifyMessageLabelsPayload) -> Self {
+        Self {
+            messages: vec![GmailMessageRef {
+                db_message_id: payload.db_message_id,
+                provider_message_id: payload.provider_message_id,
+            }],
+            labels_to_add: payload.labels_to_add,
+            labels_to_remove: payload.labels_to_remove,
+        }
+    }
+}
+
+impl ModifyMessageLabelsBatchPayload {
+    /// Splits a label write into payloads that each fit one Gmail request.
+    pub fn chunked(
+        messages: Vec<GmailMessageRef>,
+        labels_to_add: Vec<String>,
+        labels_to_remove: Vec<String>,
+    ) -> Vec<Self> {
+        messages
+            .chunks(MAX_BATCH_MODIFY_MESSAGES)
+            .map(|chunk| Self {
+                messages: chunk.to_vec(),
+                labels_to_add: labels_to_add.clone(),
+                labels_to_remove: labels_to_remove.clone(),
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct DeleteLabelPayload {
     pub provider_label_id: String,
 }
@@ -56,3 +109,6 @@ pub struct BlockSenderPayload {
 pub struct UnblockSenderPayload {
     pub email_address: String,
 }
+
+#[cfg(test)]
+mod test;
