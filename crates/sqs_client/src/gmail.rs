@@ -3,6 +3,11 @@ use models_email::gmail::gmail_ops::GmailOpsPubsubMessage;
 use models_email::gmail::inbox_sync::InboxSyncPubsubMessage;
 use std::time::Duration;
 
+#[cfg(test)]
+mod test;
+
+const MAX_DELAY_SECONDS: i32 = 900;
+
 impl SQS {
     pub fn gmail_inbox_sync_queue(mut self, gmail_inbox_sync_queue: &str) -> Self {
         self.gmail_inbox_sync_queue = Some(gmail_inbox_sync_queue.to_string());
@@ -38,7 +43,7 @@ impl SQS {
 
     /// Sends a notification message to the Gmail retry inbox sync queue, which
     /// delivers it after `delay`.
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, message), fields(link_id = %message.link_id), err)]
     pub async fn enqueue_gmail_retry_inbox_sync_notification(
         &self,
         message: InboxSyncPubsubMessage,
@@ -84,7 +89,7 @@ impl SQS {
     }
 }
 
-#[tracing::instrument(skip(sqs_client, message))]
+#[tracing::instrument(skip(sqs_client, message), err)]
 async fn enqueue_notification<T: serde::Serialize + std::fmt::Debug>(
     sqs_client: &aws_sdk_sqs::Client,
     queue_url: &str,
@@ -99,9 +104,18 @@ async fn enqueue_notification<T: serde::Serialize + std::fmt::Debug>(
         .message_body(message_str);
 
     if let Some(delay) = delay {
-        request = request.delay_seconds(i32::try_from(delay.as_secs())?);
+        request = request.delay_seconds(delay_seconds(delay));
     }
 
     request.send().await?;
     Ok(())
+}
+
+/// Rounds `delay` up to whole seconds, so the message never arrives early, and
+/// cuts it to SQS's 15-minute `DelaySeconds` limit.
+fn delay_seconds(delay: Duration) -> i32 {
+    let seconds = delay
+        .as_secs()
+        .saturating_add(u64::from(delay.subsec_nanos() > 0));
+    i32::try_from(seconds).map_or(MAX_DELAY_SECONDS, |seconds| seconds.min(MAX_DELAY_SECONDS))
 }
