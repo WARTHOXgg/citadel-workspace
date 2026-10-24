@@ -2,6 +2,8 @@ use super::thread_unread::service;
 use super::*;
 use crate::domain::models::EmailErr;
 use crate::domain::{ports::EmailMessageEnqueuer, service::EmailServiceImpl};
+use crm::domain::service::NoOpCrmService;
+use frecency::{domain::services::FrecencyQueryServiceImpl, outbound::postgres::FrecencyPgStorage};
 
 struct RecordingBroker(Arc<std::sync::Mutex<Vec<serde_json::Value>>>);
 impl macro_event_broker::MacroEventBroker for RecordingBroker {
@@ -46,6 +48,102 @@ async fn archive_publishes_one_user_attributed_event_after_commit(
     Ok(())
 }
 
+fn service_with_enqueuer<E: EmailMessageEnqueuer>(
+    pool: Pool<Postgres>,
+    enqueuer: E,
+) -> EmailServiceImpl<EmailPgRepo, FrecencyQueryServiceImpl<FrecencyPgStorage>, E, NoOpCrmService, ()>
+{
+    let original = service(pool);
+    EmailServiceImpl {
+        email_repo: original.email_repo,
+        frecency_service: original.frecency_service,
+        enqueuer,
+        crm_service: original.crm_service,
+        entity_access_management_service: original.entity_access_management_service,
+        macro_event_broker: original.macro_event_broker,
+        sent_undo_delay_secs: original.sent_undo_delay_secs,
+        sender_provider: original.sender_provider,
+    }
+}
+
+type LabelWrite = (Uuid, Vec<(Uuid, String)>, Vec<String>, Vec<String>);
+
+#[derive(Clone, Default)]
+pub(super) struct RecordingEnqueuer(pub(super) Arc<std::sync::Mutex<Vec<LabelWrite>>>);
+impl EmailMessageEnqueuer for RecordingEnqueuer {
+    type Err = anyhow::Error;
+    async fn enqueue_scheduled_message(
+        &self,
+        _: Uuid,
+        _: Uuid,
+        _: Option<i32>,
+    ) -> anyhow::Result<()> {
+        unreachable!()
+    }
+    async fn enqueue_gmail_ops_modify_labels_batch(
+        &self,
+        link_id: Uuid,
+        messages: Vec<(Uuid, String)>,
+        labels_to_add: Vec<String>,
+        labels_to_remove: Vec<String>,
+    ) -> anyhow::Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((link_id, messages, labels_to_add, labels_to_remove));
+        Ok(())
+    }
+    async fn enqueue_gmail_ops_block_sender(&self, _: Uuid, _: String) -> anyhow::Result<()> {
+        unreachable!()
+    }
+    async fn enqueue_gmail_ops_unblock_sender(&self, _: Uuid, _: String) -> anyhow::Result<()> {
+        unreachable!()
+    }
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../fixtures",
+        scripts("email_thread_labels", "email_thread_unread", "email_thread_archive")
+    )
+)]
+async fn archive_sends_gmail_only_the_messages_still_in_the_inbox(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let enqueuer = RecordingEnqueuer::default();
+    let service = service_with_enqueuer(pool, enqueuer.clone());
+    let owner = MacroUserIdStr::try_from_email("user1@test.com")?;
+    let thread = Uuid::parse_str("11111111-1111-1111-1111-111111111111")?;
+    let link = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")?;
+    let first = Uuid::parse_str("11111111-aaaa-aaaa-aaaa-111111111111")?;
+    let second = Uuid::parse_str("11111111-bbbb-bbbb-bbbb-111111111111")?;
+    service
+        .email_repo
+        .delete_message_labels_batch(&[second], "INBOX", link)
+        .await?;
+
+    service
+        .set_thread_archived_impl(owner.clone(), thread, true)
+        .await?;
+    // Archiving again changes no labels, so Gmail hears nothing.
+    service
+        .set_thread_archived_impl(owner, thread, true)
+        .await?;
+
+    assert_eq!(
+        *enqueuer.0.lock().unwrap(),
+        vec![(
+            link,
+            vec![(first, "msg1a".to_string())],
+            vec![],
+            vec!["INBOX".to_string()]
+        )]
+    );
+    assert_inbox_state(&service.email_repo, thread, false).await?;
+    Ok(())
+}
+
 struct FailingEnqueuer;
 impl EmailMessageEnqueuer for FailingEnqueuer {
     type Err = anyhow::Error;
@@ -84,17 +182,7 @@ impl EmailMessageEnqueuer for FailingEnqueuer {
 async fn archive_enqueue_failure_restores_only_changed_labels_and_the_original_flag(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {
-    let original = service(pool);
-    let service = EmailServiceImpl {
-        email_repo: original.email_repo,
-        frecency_service: original.frecency_service,
-        enqueuer: FailingEnqueuer,
-        crm_service: original.crm_service,
-        entity_access_management_service: original.entity_access_management_service,
-        macro_event_broker: original.macro_event_broker,
-        sent_undo_delay_secs: original.sent_undo_delay_secs,
-        sender_provider: original.sender_provider,
-    };
+    let service = service_with_enqueuer(pool, FailingEnqueuer);
     let thread = Uuid::parse_str("11111111-1111-1111-1111-111111111111")?;
     let link = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")?;
     let first = Uuid::parse_str("11111111-aaaa-aaaa-aaaa-111111111111")?;

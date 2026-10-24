@@ -376,11 +376,11 @@ where
 
         let all_ids: Vec<Uuid> = messages.iter().map(|m| m.db_id).collect();
 
-        // Snapshot which messages actually gain/lose the label, so an
-        // enqueue-failure revert restores only what this call changed — the
-        // batch writes are idempotent, and blindly inverting every message
-        // would strip pre-existing state. Best effort: if the snapshot read
-        // fails, fall back to treating all messages as changed.
+        // Snapshot which messages actually gain/lose the label. Only those go
+        // to Gmail, and an enqueue-failure revert restores only what this call
+        // changed — the batch writes are idempotent, and blindly inverting
+        // every message would strip pre-existing state. Best effort: if the
+        // snapshot read fails, fall back to treating all messages as changed.
         let changed_ids: Vec<Uuid> = match self.email_repo.labels_by_message_ids(&all_ids).await {
             Ok(labels_by_id) => all_ids
                 .iter()
@@ -421,13 +421,14 @@ where
         self.apply_label_db_changes(link, thread_id, &all_ids, &provider_label_id, add)
             .await?;
 
-        // Enqueue Gmail API calls via the gmail_ops worker (provider messages
-        // only). Enqueue failure means Gmail would never learn about this
-        // change (there is no worker to retry a message that was never
-        // queued), so revert the optimistic DB writes and fail — mirroring
-        // the worker's revert on permanent Gmail errors.
+        // Enqueue one Gmail write via the gmail_ops worker, for the provider
+        // messages whose labels this call changed. Enqueue failure means Gmail
+        // would never learn about this change (there is no worker to retry a
+        // message that was never queued), so revert the optimistic DB writes
+        // and fail — mirroring the worker's revert on permanent Gmail errors.
         let provider_messages: Vec<(Uuid, String)> = messages
             .iter()
+            .filter(|msg| changed_ids.contains(&msg.db_id))
             .filter_map(|msg| {
                 msg.provider_id
                     .as_ref()
