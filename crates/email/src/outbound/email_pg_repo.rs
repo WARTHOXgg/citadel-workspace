@@ -437,6 +437,36 @@ impl EmailRepo for EmailPgRepo {
             .await
     }
 
+    async fn mark_pending_label_writes(
+        &self,
+        link_id: Uuid,
+        message_ids: &[Uuid],
+        provider_label_id: &str,
+        write_id: Uuid,
+    ) -> Result<(), Self::Err> {
+        email_db_client::labels::pending_writes::mark_pending_label_writes(
+            &self.pool,
+            link_id,
+            message_ids,
+            provider_label_id,
+            write_id,
+        )
+        .await
+    }
+
+    async fn clear_pending_label_writes(
+        &self,
+        message_ids: &[Uuid],
+        write_id: Uuid,
+    ) -> Result<(), Self::Err> {
+        email_db_client::labels::pending_writes::clear_pending_label_writes(
+            &self.pool,
+            message_ids,
+            write_id,
+        )
+        .await
+    }
+
     async fn set_thread_read_state(
         &self,
         thread_id: Uuid,

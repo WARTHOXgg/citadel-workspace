@@ -66,6 +66,9 @@ tools — hexagonal, heavily feature-gated.
   dependency belongs under before wiring it in.
 - `domain/ports.rs` defines the traits adapters implement — call through the
   domain service, never an outbound adapter directly from another crate.
+- `commit_thread_label_write` marks exactly the messages it enqueues as
+  pending, before the enqueue, and clears those markers if the enqueue fails;
+  every enqueued operation carries the marker's write id.
 - Sender discovery authorizes the inbox first. Gmail aliases use the sender
   provider; Outlook exposes its verified primary address without a Gmail lookup.
 - Outlook organization commands only run in their link's current

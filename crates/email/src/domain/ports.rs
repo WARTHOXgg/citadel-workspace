@@ -34,12 +34,14 @@ pub trait EmailMessageEnqueuer: Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
 
     /// Enqueue a batch of Gmail label modification operations to the gmail_ops worker queue.
+    /// Each operation clears its message's `pending_write_id` marker when it finishes.
     fn enqueue_gmail_ops_modify_labels_batch(
         &self,
         link_id: Uuid,
         messages: Vec<(Uuid, String)>,
         labels_to_add: Vec<String>,
         labels_to_remove: Vec<String>,
+        pending_write_id: Uuid,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
 
     /// Enqueue a Gmail-ops BlockSender operation for the link.
@@ -414,6 +416,24 @@ pub trait EmailRepo: Send + Sync + 'static {
         message_ids: &[Uuid],
         provider_label_id: &str,
         link_id: Uuid,
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+
+    /// Mark a label change on the link's messages as pending until Gmail
+    /// confirms it, so inbox sync keeps the local state meanwhile. A newer
+    /// write to the same label on a message replaces its marker.
+    fn mark_pending_label_writes(
+        &self,
+        link_id: Uuid,
+        message_ids: &[Uuid],
+        provider_label_id: &str,
+        write_id: Uuid,
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+
+    /// Remove `write_id`'s pending markers, keeping those a newer write replaced.
+    fn clear_pending_label_writes(
+        &self,
+        message_ids: &[Uuid],
+        write_id: Uuid,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
 
     /// Atomically update the UNREAD label assignments and the message/thread read flags.
@@ -1177,6 +1197,7 @@ impl EmailMessageEnqueuer for NoOpEnqueuer {
         _messages: Vec<(Uuid, String)>,
         _labels_to_add: Vec<String>,
         _labels_to_remove: Vec<String>,
+        _pending_write_id: Uuid,
     ) -> Result<(), Self::Err> {
         Ok(())
     }

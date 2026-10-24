@@ -605,6 +605,30 @@ where
             } else {
                 (vec![], vec![provider_label_id.to_string()])
             };
+            let provider_message_ids: Vec<Uuid> =
+                provider_messages.iter().map(|(id, _)| *id).collect();
+            let pending_write_id = macro_uuid::generate_uuid_v7();
+
+            // Marked before the enqueue, so an operation can't finish before
+            // its marker exists and leave the marker behind.
+            if let Err(e) = self
+                .email_repo
+                .mark_pending_label_writes(
+                    link.id,
+                    &provider_message_ids,
+                    provider_label_id,
+                    pending_write_id,
+                )
+                .await
+            {
+                let err = anyhow::Error::from(e);
+                tracing::error!(error=?err, "failed to mark gmail label write pending, reverting database changes");
+                for thread in &threads {
+                    self.revert_label_db_changes(&link, thread, provider_label_id, add)
+                        .await;
+                }
+                return Err(EmailErr::RepoErr(err));
+            }
 
             if let Err(e) = self
                 .enqueuer
@@ -613,6 +637,7 @@ where
                     provider_messages,
                     labels_to_add,
                     labels_to_remove,
+                    pending_write_id,
                 )
                 .await
             {
@@ -622,6 +647,8 @@ where
                     self.revert_label_db_changes(&link, thread, provider_label_id, add)
                         .await;
                 }
+                self.clear_pending_label_writes(&provider_message_ids, pending_write_id)
+                    .await;
                 return Err(EmailErr::EnqueueErr(err));
             }
         }
@@ -757,6 +784,19 @@ where
         {
             let err = anyhow::Error::from(e);
             tracing::error!(error=?err, "failed to revert message starred status after enqueue failure");
+        }
+    }
+
+    /// Best effort: a marker left behind only keeps inbox sync off that label
+    /// on those messages until it expires.
+    async fn clear_pending_label_writes(&self, message_ids: &[Uuid], write_id: Uuid) {
+        if let Err(e) = self
+            .email_repo
+            .clear_pending_label_writes(message_ids, write_id)
+            .await
+        {
+            let err = anyhow::Error::from(e);
+            tracing::error!(error=?err, "failed to clear pending label write markers");
         }
     }
 
