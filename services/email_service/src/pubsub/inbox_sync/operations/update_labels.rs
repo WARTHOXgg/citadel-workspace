@@ -435,14 +435,22 @@ pub async fn add_message_labels(
     })?;
 
     let result = async {
-        insert::insert_message_labels(&mut tx, link.id, message_db_id, provider_label_ids, false)
-            .await
-            .map_err(|e| {
-                ProcessingError::Retryable(DetailedError {
-                    reason: FailureReason::DatabaseQueryFailed,
-                    source: e.context("Failed to insert message labels".to_string()),
-                })
-            })?;
+        // `label_diff` already left pending labels out of `provider_label_ids`.
+        insert::insert_message_labels(
+            &mut tx,
+            link.id,
+            message_db_id,
+            provider_label_ids,
+            false,
+            &[],
+        )
+        .await
+        .map_err(|e| {
+            ProcessingError::Retryable(DetailedError {
+                reason: FailureReason::DatabaseQueryFailed,
+                source: e.context("Failed to insert message labels".to_string()),
+            })
+        })?;
 
         // if we are adding unread label, mark message as not read
         if provider_label_ids
