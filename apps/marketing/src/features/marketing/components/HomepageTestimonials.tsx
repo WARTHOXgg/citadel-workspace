@@ -7,7 +7,7 @@ export function HomepageTestimonials() {
     <section
       id="homepage-testimonial"
       class="homepage-testimonials workspace-demo"
-      aria-label="What people say about Macro"
+      aria-label="Featured customer testimonial"
     >
       <figure>
         <blockquote>

@@ -26,7 +26,7 @@ export interface PageSeo {
   noindex?: boolean;
 }
 
-export const SITE_NAME = 'Macro';
+export const SITE_NAME = 'Citadel';
 export const DEFAULT_OG_IMAGE = `${APP_BASE_URL}/og/home-unified-2026-10-23.png`;
 
 // Homepage only: other product and article cards retain their own images.

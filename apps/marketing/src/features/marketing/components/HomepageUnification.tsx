@@ -362,7 +362,7 @@ export function HomepageUnification(
         <h2 id="unification-heading">
           <span class="unification-heading-prefix">Replace 27+ apps</span>
           <br />
-          with Macro.
+          with Citadel.
         </h2>
         <p class="unification-subtext">
           <span class="unification-subtext-desktop">

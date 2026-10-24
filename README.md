@@ -1,3 +1,5 @@
+> **Citadel** is a fork of [Macro](https://github.com/macro-inc/macro), the open-source unified workspace. The original logo is retained for now.
+
 <div align="center">
   <a target="_blank" href="https://macro.com">
     <img width="2195" height="721" alt="Frame 11" src="https://github.com/user-attachments/assets/50405352-785e-4984-b24f-544e89731acb" />

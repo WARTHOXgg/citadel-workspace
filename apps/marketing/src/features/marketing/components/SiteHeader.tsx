@@ -133,7 +133,7 @@ export function SiteHeader(props: { hideOpenApp?: boolean }) {
           href="/"
           target="_self"
           class="site-menu-trigger site-menu-home"
-          aria-label="Macro home"
+          aria-label="Citadel home"
           aria-expanded={open()}
           aria-controls="site-main-navigation"
           aria-keyshortcuts="ArrowDown"

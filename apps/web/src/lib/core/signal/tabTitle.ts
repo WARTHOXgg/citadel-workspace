@@ -15,6 +15,6 @@ function getEnvPrefix(): string {
 const ENV_PREFIX = getEnvPrefix();
 
 export function formatTabTitle(title: string | undefined) {
-  if (title) return `${ENV_PREFIX}Macro - ${title}`;
-  return `${ENV_PREFIX}Macro`;
+  if (title) return `${ENV_PREFIX}Citadel - ${title}`;
+  return `${ENV_PREFIX}Citadel`;
 }
