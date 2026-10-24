@@ -679,6 +679,9 @@ task accessible. Opening an associated task extends the breadcrumb trail; choose
 the project breadcrumb to return, or Projects to restore the collection and its
 filters, groups, and scroll position. Project URLs retain identity and section:
 `/app/component/initiative-view~<project-id>~overview` (or `tasks`).
+Projects need an account to open, even with a Public link: signed out, both
+that URL and `/app/tasks/projects/<project-id>/overview` show **Sign in to view
+this page** with Login and Sign Up, never an indefinite loader.
 Project properties live in the shared floating information panel and honor
 project access. Editors can rename the project; its owner can delete it.
 Deleting a project leaves its tasks in the workspace.
