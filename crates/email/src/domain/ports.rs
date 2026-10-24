@@ -25,6 +25,10 @@ pub trait EmailMessageEnqueuer: Send + Sync + 'static {
     /// Error type for enqueue operations.
     type Err: Send;
 
+    /// Most messages one Gmail label write carries as a single provider
+    /// request; a larger write is split across several queue messages.
+    const MAX_LABEL_WRITE_MESSAGES: usize;
+
     /// Enqueue a message to be sent after an optional delay.
     fn enqueue_scheduled_message(
         &self,
@@ -1161,6 +1165,7 @@ pub struct NoOpEnqueuer;
 
 impl EmailMessageEnqueuer for NoOpEnqueuer {
     type Err = std::convert::Infallible;
+    const MAX_LABEL_WRITE_MESSAGES: usize = usize::MAX;
 
     async fn enqueue_scheduled_message(
         &self,

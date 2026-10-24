@@ -11,6 +11,7 @@ use crate::domain::{
 use frecency::domain::ports::FrecencyQueryService;
 use macro_event_broker::MacroEventBroker;
 use std::collections::HashSet;
+use std::ops::Range;
 use uuid::Uuid;
 
 use super::EmailServiceImpl;
@@ -42,12 +43,55 @@ impl StagedThreadLabels {
     }
 }
 
-/// Staged changes of one label on threads of one inbox, sent as one Gmail write.
+/// Staged changes of one label on threads of one inbox, sent to Gmail as one
+/// write per group of threads that fits a provider request.
 struct ThreadLabelWrite {
     link: Link,
     label: LinkLabel,
     add: bool,
     threads: Vec<StagedThreadLabels>,
+}
+
+/// Threads of a label write that were reverted because their change could not
+/// be queued for Gmail.
+struct UnsentThreads {
+    thread_ids: Vec<Uuid>,
+    error: EmailErr,
+}
+
+/// Splits threads into consecutive groups whose changed provider messages fit
+/// `limit`. A thread with more changed messages than `limit` forms its own
+/// group, which the enqueuer splits across several queue messages.
+fn label_write_groups(threads: &[StagedThreadLabels], limit: usize) -> Vec<Range<usize>> {
+    let mut groups = Vec::new();
+    let mut start = 0;
+    let mut count = 0;
+    for (index, thread) in threads.iter().enumerate() {
+        let messages = thread.changed_provider_messages().count();
+        if index > start && count + messages > limit {
+            groups.push(start..index);
+            start = index;
+            count = 0;
+        }
+        count += messages;
+    }
+    if start < threads.len() {
+        groups.push(start..threads.len());
+    }
+    groups
+}
+
+/// Errors about one thread of a bulk request, rather than the service.
+fn rejects_thread(error: &EmailErr) -> bool {
+    matches!(
+        error,
+        EmailErr::ThreadNotFound
+            | EmailErr::ThreadEmpty
+            | EmailErr::ThreadHasNoInboundMessages
+            | EmailErr::LabelNotFound
+            | EmailErr::EmptyProviderLabelId
+            | EmailErr::Unauthorized
+    )
 }
 
 impl<T, U, E, CS, Eam, B> EmailServiceImpl<T, U, E, CS, Eam, B>
@@ -399,7 +443,8 @@ where
             },
             actor,
         )
-        .await?;
+        .await
+        .map_err(|unsent| unsent.error)?;
 
         Ok(UpdateThreadLabelsResult {
             successful_ids,
@@ -421,13 +466,20 @@ where
         thread_ids: Vec<Uuid>,
         archived: bool,
     ) -> Result<SetThreadsArchivedResult, EmailErr> {
+        let mut seen = HashSet::new();
+        let thread_ids: Vec<Uuid> = thread_ids
+            .into_iter()
+            .filter(|id| seen.insert(*id))
+            .collect();
         if thread_ids.len() > MAX_BULK_ARCHIVE_THREADS {
             return Err(EmailErr::TooManyThreads(MAX_BULK_ARCHIVE_THREADS));
         }
         let mut result = SetThreadsArchivedResult::default();
         let mut writes: Vec<ThreadLabelWrite> = Vec::new();
-        let mut seen = HashSet::new();
-        for thread_id in thread_ids.into_iter().filter(|id| seen.insert(*id)) {
+        // Reported instead of per-thread failures when nothing changed, so an
+        // outage surfaces as an error rather than a list of failed threads.
+        let mut service_error = None;
+        for thread_id in thread_ids {
             let staged: Result<Option<(usize, StagedThreadLabels)>, EmailErr> = async {
                 let link = self
                     .email_repo
@@ -481,6 +533,9 @@ where
                 Err(error) => {
                     tracing::warn!(error = ?error, %thread_id, "thread left out of bulk archive");
                     result.failed_thread_ids.push(thread_id);
+                    if !rejects_thread(&error) {
+                        service_error.get_or_insert(error);
+                    }
                 }
             }
         }
@@ -492,8 +547,21 @@ where
                 .await
             {
                 Ok(()) => result.updated_thread_ids.extend(thread_ids),
-                Err(_) => result.failed_thread_ids.extend(thread_ids),
+                Err(unsent) => {
+                    result.updated_thread_ids.extend(
+                        thread_ids
+                            .into_iter()
+                            .filter(|id| !unsent.thread_ids.contains(id)),
+                    );
+                    result.failed_thread_ids.extend(unsent.thread_ids);
+                    service_error.get_or_insert(unsent.error);
+                }
             }
+        }
+        if result.updated_thread_ids.is_empty()
+            && let Some(error) = service_error
+        {
+            return Err(error);
         }
         Ok(result)
     }
@@ -577,52 +645,61 @@ where
         })
     }
 
-    /// Send staged label changes to Gmail as one write through the gmail_ops
-    /// worker, then finish each thread. Enqueue failure means Gmail would
-    /// never learn about the changes (there is no worker to retry a message
-    /// that was never queued), so every thread reverts and the call fails —
-    /// mirroring the worker's revert on permanent Gmail errors.
+    /// Send staged label changes to Gmail through the gmail_ops worker, then
+    /// finish each sent thread. Threads go out in groups whose changed messages
+    /// fit one provider write, so a failed enqueue leaves whole threads unsent.
+    /// Gmail would never learn about those (there is no worker to retry a
+    /// message that was never queued), so they revert and come back as
+    /// unsent — mirroring the worker's revert on permanent Gmail errors.
     async fn commit_thread_label_write(
         &self,
         write: ThreadLabelWrite,
         actor: Option<macro_user_id::user_id::MacroUserIdStr<'static>>,
-    ) -> Result<(), EmailErr> {
+    ) -> Result<(), UnsentThreads> {
         let ThreadLabelWrite {
             link,
             label,
             add,
-            threads,
+            mut threads,
         } = write;
         let provider_label_id = label.provider_label_id.as_str();
-        let provider_messages: Vec<(Uuid, String)> = threads
-            .iter()
-            .flat_map(StagedThreadLabels::changed_provider_messages)
-            .collect();
+        let (labels_to_add, labels_to_remove) = if add {
+            (vec![provider_label_id.to_string()], vec![])
+        } else {
+            (vec![], vec![provider_label_id.to_string()])
+        };
 
-        if !provider_messages.is_empty() {
-            let (labels_to_add, labels_to_remove) = if add {
-                (vec![provider_label_id.to_string()], vec![])
-            } else {
-                (vec![], vec![provider_label_id.to_string()])
-            };
-
+        let mut unsent = None;
+        for group in label_write_groups(&threads, E::MAX_LABEL_WRITE_MESSAGES) {
+            let provider_messages: Vec<(Uuid, String)> = threads[group.clone()]
+                .iter()
+                .flat_map(StagedThreadLabels::changed_provider_messages)
+                .collect();
+            if provider_messages.is_empty() {
+                continue;
+            }
             if let Err(e) = self
                 .enqueuer
                 .enqueue_gmail_ops_modify_labels_batch(
                     link.id,
                     provider_messages,
-                    labels_to_add,
-                    labels_to_remove,
+                    labels_to_add.clone(),
+                    labels_to_remove.clone(),
                 )
                 .await
             {
                 let err = anyhow::Error::from(e);
                 tracing::error!(error=?err, "failed to enqueue gmail ops label sync, reverting database changes");
-                for thread in &threads {
+                let unsent_threads = threads.split_off(group.start);
+                for thread in &unsent_threads {
                     self.revert_label_db_changes(&link, thread, provider_label_id, add)
                         .await;
                 }
-                return Err(EmailErr::EnqueueErr(err));
+                unsent = Some(UnsentThreads {
+                    thread_ids: unsent_threads.iter().map(|t| t.thread_id).collect(),
+                    error: EmailErr::EnqueueErr(err),
+                });
+                break;
             }
         }
 
@@ -669,7 +746,7 @@ where
             );
         }
 
-        Ok(())
+        unsent.map_or(Ok(()), Err)
     }
 
     /// Best-effort revert of the optimistic label write after the Gmail sync

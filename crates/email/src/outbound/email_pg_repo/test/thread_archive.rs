@@ -72,6 +72,7 @@ type LabelWrite = (Uuid, Vec<(Uuid, String)>, Vec<String>, Vec<String>);
 struct RecordingEnqueuer(Arc<std::sync::Mutex<Vec<LabelWrite>>>);
 impl EmailMessageEnqueuer for RecordingEnqueuer {
     type Err = anyhow::Error;
+    const MAX_LABEL_WRITE_MESSAGES: usize = 1000;
     async fn enqueue_scheduled_message(
         &self,
         _: Uuid,
@@ -147,6 +148,7 @@ async fn archive_sends_gmail_only_the_messages_still_in_the_inbox(
 struct FailingEnqueuer;
 impl EmailMessageEnqueuer for FailingEnqueuer {
     type Err = anyhow::Error;
+    const MAX_LABEL_WRITE_MESSAGES: usize = 1000;
     async fn enqueue_scheduled_message(
         &self,
         _: Uuid,
@@ -505,7 +507,7 @@ async fn bulk_archive_sends_one_gmail_write_per_inbox_and_reports_threads_it_ski
         scripts("email_thread_labels", "email_thread_unread", "email_thread_archive")
     )
 )]
-async fn bulk_archive_enqueue_failure_restores_every_thread_and_reports_it(
+async fn bulk_archive_reports_an_enqueue_outage_instead_of_failing_every_thread(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {
     let service = service_with_enqueuer(pool, FailingEnqueuer);
@@ -518,17 +520,131 @@ async fn bulk_archive_enqueue_failure_restores_every_thread_and_reports_it(
             vec![primary_thread, secondary_thread],
             true,
         )
+        .await;
+
+    assert!(matches!(result, Err(EmailErr::EnqueueErr(_))));
+    assert_inbox_state(&service.email_repo, primary_thread, true).await?;
+    assert_inbox_state(&service.email_repo, secondary_thread, true).await?;
+    Ok(())
+}
+
+/// Accepts one label write, then fails, with room for two messages per write.
+#[derive(Clone, Default)]
+struct FailsAfterFirstWriteEnqueuer(Arc<std::sync::Mutex<Vec<LabelWrite>>>);
+impl EmailMessageEnqueuer for FailsAfterFirstWriteEnqueuer {
+    type Err = anyhow::Error;
+    const MAX_LABEL_WRITE_MESSAGES: usize = 2;
+    async fn enqueue_scheduled_message(
+        &self,
+        _: Uuid,
+        _: Uuid,
+        _: Option<i32>,
+    ) -> anyhow::Result<()> {
+        unreachable!()
+    }
+    async fn enqueue_gmail_ops_modify_labels_batch(
+        &self,
+        link_id: Uuid,
+        messages: Vec<(Uuid, String)>,
+        labels_to_add: Vec<String>,
+        labels_to_remove: Vec<String>,
+    ) -> anyhow::Result<()> {
+        let mut writes = self.0.lock().unwrap();
+        if !writes.is_empty() {
+            anyhow::bail!("test queue unavailable");
+        }
+        writes.push((link_id, messages, labels_to_add, labels_to_remove));
+        Ok(())
+    }
+    async fn enqueue_gmail_ops_block_sender(&self, _: Uuid, _: String) -> anyhow::Result<()> {
+        unreachable!()
+    }
+    async fn enqueue_gmail_ops_unblock_sender(&self, _: Uuid, _: String) -> anyhow::Result<()> {
+        unreachable!()
+    }
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../fixtures",
+        scripts(
+            "email_thread_labels",
+            "email_thread_unread",
+            "email_thread_archive",
+            "email_thread_archive_groups"
+        )
+    )
+)]
+async fn bulk_archive_reverts_only_the_threads_whose_write_could_not_be_queued(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let enqueuer = FailsAfterFirstWriteEnqueuer::default();
+    let service = service_with_enqueuer(pool, enqueuer.clone());
+    let queued_thread = Uuid::parse_str("11111111-1111-1111-1111-111111111111")?;
+    let unqueued_thread = Uuid::parse_str("77777777-7777-7777-7777-777777777777")?;
+
+    let result = service
+        .set_threads_archived_impl(
+            MacroUserIdStr::try_from_email("user1@test.com")?,
+            vec![queued_thread, unqueued_thread],
+            true,
+        )
         .await?;
 
     assert_eq!(
         result,
         SetThreadsArchivedResult {
-            updated_thread_ids: vec![],
-            failed_thread_ids: vec![primary_thread, secondary_thread],
+            updated_thread_ids: vec![queued_thread],
+            failed_thread_ids: vec![unqueued_thread],
         }
     );
-    assert_inbox_state(&service.email_repo, primary_thread, true).await?;
-    assert_inbox_state(&service.email_repo, secondary_thread, true).await?;
+    // The first thread's two messages fill the first write on their own.
+    assert_eq!(
+        enqueuer
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, messages, _, _)| messages.len())
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert_inbox_state(&service.email_repo, queued_thread, false).await?;
+    assert_inbox_state(&service.email_repo, unqueued_thread, true).await?;
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../fixtures",
+        scripts("email_thread_labels", "email_thread_unread", "email_thread_archive")
+    )
+)]
+async fn bulk_archive_counts_repeated_threads_once_against_the_limit(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let enqueuer = RecordingEnqueuer::default();
+    let service = service_with_enqueuer(pool, enqueuer.clone());
+    let thread = Uuid::parse_str("11111111-1111-1111-1111-111111111111")?;
+
+    let result = service
+        .set_threads_archived_impl(
+            MacroUserIdStr::try_from_email("user1@test.com")?,
+            vec![thread; MAX_BULK_ARCHIVE_THREADS + 1],
+            true,
+        )
+        .await?;
+
+    assert_eq!(
+        result,
+        SetThreadsArchivedResult {
+            updated_thread_ids: vec![thread],
+            failed_thread_ids: vec![],
+        }
+    );
+    assert_eq!(enqueuer.0.lock().unwrap().len(), 1);
     Ok(())
 }
 

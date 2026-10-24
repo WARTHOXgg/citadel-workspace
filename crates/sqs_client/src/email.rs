@@ -130,6 +130,9 @@ impl SQS {
 impl EmailMessageEnqueuer for SQS {
     type Err = anyhow::Error;
 
+    const MAX_LABEL_WRITE_MESSAGES: usize =
+        models_email::gmail::gmail_ops::MAX_BATCH_MODIFY_MESSAGES;
+
     async fn enqueue_scheduled_message(
         &self,
         link_id: Uuid,
