@@ -100,6 +100,7 @@ vi.mock('@queries/agents/avatar', () => ({
 
 const apiKeyMocks = vi.hoisted(() => ({
   query: {
+    isSuccess: true,
     data: undefined as
       | {
           key?: { provider: string; updatedAt: string } | null;

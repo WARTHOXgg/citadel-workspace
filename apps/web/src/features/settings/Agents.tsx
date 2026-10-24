@@ -882,9 +882,12 @@ function AgentEditorPage(props: {
     harnessId() === IN_MEMORY_HARNESS.id
       ? apiKeyProviderOf(selectedDefaultModelId())
       : undefined;
+  // A new agent has no id yet, so its query stays disabled; read the data
+  // only once it has loaded, or the editor would suspend on it.
+  const apiKeyData = () => (apiKey.isSuccess ? apiKey.data : undefined);
   const savedApiKey = () =>
-    removingApiKey() ? undefined : (apiKey.data?.key ?? undefined);
-  const apiKeyLocked = () => apiKey.data?.planAllows === false;
+    removingApiKey() ? undefined : (apiKeyData()?.key ?? undefined);
+  const apiKeyLocked = () => apiKeyData()?.planAllows === false;
   const apiKeyHelp = (provider: ApiKeyProvider) => {
     const saved = savedApiKey();
     if (apiKeyLocked())
