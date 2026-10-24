@@ -258,6 +258,7 @@
   "email.patchSettings": "Patch Settings",
   "email.mailboxSettingsOperations": "Mailbox Settings Operations",
   "email.disableSync": "Disable Sync",
+  "email.archiveThreads": "Archive Threads",
   "email.previewsInboxCursor": "Previews Inbox Cursor",
   "email.archiveThread": "Archive Thread",
   "email.addRemoveThreadLabel": "Add Remove Thread Label",
