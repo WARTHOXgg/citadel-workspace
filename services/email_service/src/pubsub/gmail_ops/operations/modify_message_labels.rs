@@ -18,7 +18,7 @@ pub async fn modify_message_labels(
         .email_api
         .modify_message_labels(
             link.id,
-            &payload.provider_message_id,
+            std::slice::from_ref(&payload.provider_message_id),
             &payload.labels_to_add,
             &payload.labels_to_remove,
         )
