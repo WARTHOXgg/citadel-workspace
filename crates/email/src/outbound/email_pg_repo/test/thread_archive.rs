@@ -1,6 +1,6 @@
 use super::thread_unread::service;
 use super::*;
-use crate::domain::models::EmailErr;
+use crate::domain::models::{EmailErr, MAX_BULK_ARCHIVE_THREADS, SetThreadsArchivedResult};
 use crate::domain::{ports::EmailMessageEnqueuer, service::EmailServiceImpl};
 use crm::domain::service::NoOpCrmService;
 use frecency::{domain::services::FrecencyQueryServiceImpl, outbound::postgres::FrecencyPgStorage};
@@ -69,7 +69,7 @@ fn service_with_enqueuer<E: EmailMessageEnqueuer>(
 type LabelWrite = (Uuid, Vec<(Uuid, String)>, Vec<String>, Vec<String>);
 
 #[derive(Clone, Default)]
-pub(super) struct RecordingEnqueuer(pub(super) Arc<std::sync::Mutex<Vec<LabelWrite>>>);
+struct RecordingEnqueuer(Arc<std::sync::Mutex<Vec<LabelWrite>>>);
 impl EmailMessageEnqueuer for RecordingEnqueuer {
     type Err = anyhow::Error;
     async fn enqueue_scheduled_message(
@@ -422,5 +422,139 @@ async fn unarchive_rejects_sent_only_and_drafts_but_accepts_self_addressed_mail(
         .set_thread_archived_impl(owner, self_addressed, false)
         .await?;
     assert_inbox_state(&service.email_repo, self_addressed, true).await?;
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../fixtures",
+        scripts("email_thread_labels", "email_thread_unread", "email_thread_archive")
+    )
+)]
+async fn bulk_archive_sends_one_gmail_write_per_inbox_and_reports_threads_it_skips(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let enqueuer = RecordingEnqueuer::default();
+    let service = service_with_enqueuer(pool, enqueuer.clone());
+    let owner = MacroUserIdStr::try_from_email("user1@test.com")?;
+    let primary_thread = Uuid::parse_str("11111111-1111-1111-1111-111111111111")?;
+    let empty_thread = Uuid::parse_str("22222222-2222-2222-2222-222222222222")?;
+    let secondary_thread = Uuid::parse_str("33333333-3333-3333-3333-333333333333")?;
+    let missing_thread = Uuid::from_u128(404);
+
+    let result = service
+        .set_threads_archived_impl(
+            owner,
+            vec![
+                primary_thread,
+                empty_thread,
+                secondary_thread,
+                primary_thread,
+                missing_thread,
+            ],
+            true,
+        )
+        .await?;
+
+    assert_eq!(
+        result,
+        SetThreadsArchivedResult {
+            updated_thread_ids: vec![primary_thread, secondary_thread],
+            failed_thread_ids: vec![empty_thread, missing_thread],
+        }
+    );
+    assert_eq!(
+        *enqueuer.0.lock().unwrap(),
+        vec![
+            (
+                Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")?,
+                vec![
+                    (
+                        Uuid::parse_str("11111111-bbbb-bbbb-bbbb-111111111111")?,
+                        "msg1b".to_string()
+                    ),
+                    (
+                        Uuid::parse_str("11111111-aaaa-aaaa-aaaa-111111111111")?,
+                        "msg1a".to_string()
+                    ),
+                ],
+                vec![],
+                vec!["INBOX".to_string()],
+            ),
+            (
+                Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-bbbbbbbbbbbb")?,
+                vec![(
+                    Uuid::parse_str("33333333-aaaa-aaaa-aaaa-333333333333")?,
+                    "msg3".to_string()
+                )],
+                vec![],
+                vec!["INBOX".to_string()],
+            ),
+        ]
+    );
+    assert_inbox_state(&service.email_repo, primary_thread, false).await?;
+    assert_inbox_state(&service.email_repo, secondary_thread, false).await?;
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../fixtures",
+        scripts("email_thread_labels", "email_thread_unread", "email_thread_archive")
+    )
+)]
+async fn bulk_archive_enqueue_failure_restores_every_thread_and_reports_it(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let service = service_with_enqueuer(pool, FailingEnqueuer);
+    let primary_thread = Uuid::parse_str("11111111-1111-1111-1111-111111111111")?;
+    let secondary_thread = Uuid::parse_str("33333333-3333-3333-3333-333333333333")?;
+
+    let result = service
+        .set_threads_archived_impl(
+            MacroUserIdStr::try_from_email("user1@test.com")?,
+            vec![primary_thread, secondary_thread],
+            true,
+        )
+        .await?;
+
+    assert_eq!(
+        result,
+        SetThreadsArchivedResult {
+            updated_thread_ids: vec![],
+            failed_thread_ids: vec![primary_thread, secondary_thread],
+        }
+    );
+    assert_inbox_state(&service.email_repo, primary_thread, true).await?;
+    assert_inbox_state(&service.email_repo, secondary_thread, true).await?;
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../../fixtures", scripts("email_thread_labels"))
+)]
+async fn bulk_archive_rejects_more_threads_than_one_request_may_change(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let enqueuer = RecordingEnqueuer::default();
+    let service = service_with_enqueuer(pool, enqueuer.clone());
+    let thread_ids = (0..=MAX_BULK_ARCHIVE_THREADS as u128)
+        .map(Uuid::from_u128)
+        .collect();
+
+    assert!(matches!(
+        service
+            .set_threads_archived_impl(
+                MacroUserIdStr::try_from_email("user1@test.com")?,
+                thread_ids,
+                true,
+            )
+            .await,
+        Err(EmailErr::TooManyThreads(MAX_BULK_ARCHIVE_THREADS))
+    ));
+    assert!(enqueuer.0.lock().unwrap().is_empty());
     Ok(())
 }
