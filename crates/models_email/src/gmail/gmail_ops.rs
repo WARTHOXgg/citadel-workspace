@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use strum::Display;
 use uuid::Uuid;
 
+/// Gmail's limit on message ids in one `messages.batchModify` request.
+pub const MAX_BATCH_MODIFY_MESSAGES: usize = 1000;
+
 /// Message type for the Gmail operations worker queue.
 /// Contains the link_id (to fetch the Gmail access token) and the operation to perform.
 #[derive(Debug, Deserialize, Serialize, Clone)]
